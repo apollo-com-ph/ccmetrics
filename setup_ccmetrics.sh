@@ -487,6 +487,34 @@ if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
 fi
 
 # ============================================================================
+# FETCH USAGE LIMITS
+# ============================================================================
+
+SEVEN_DAY_UTIL="null"
+SEVEN_DAY_RESETS="null"
+
+CREDENTIALS_FILE="$HOME/.claude/.credentials.json"
+if [ -f "$CREDENTIALS_FILE" ]; then
+    ACCESS_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
+    if [ -n "$ACCESS_TOKEN" ]; then
+        USAGE_RESPONSE=$(curl -s --max-time 5 \
+            "https://api.anthropic.com/api/oauth/usage" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "anthropic-beta: oauth-2025-04-20" \
+            -H "Accept: application/json" 2>/dev/null)
+
+        if [ -n "$USAGE_RESPONSE" ] && ! echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+            SEVEN_DAY_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.utilization // "null"')
+            SEVEN_DAY_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.resets_at // "null"')
+            log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
+        else
+            log "⚠️  Failed to fetch usage data"
+        fi
+    fi
+fi
+
+# ============================================================================
 # CREATE PAYLOAD
 # ============================================================================
 
@@ -503,6 +531,8 @@ PAYLOAD=$(jq -n \
   --arg user_messages "$USER_MSG_COUNT" \
   --arg tools "$TOOLS" \
   --arg context_percent "$CONTEXT_PERCENT" \
+  --argjson seven_day_util "$SEVEN_DAY_UTIL" \
+  --arg seven_day_resets "$SEVEN_DAY_RESETS" \
   '{
     session_id: $session_id,
     developer: $developer,
@@ -515,7 +545,9 @@ PAYLOAD=$(jq -n \
     message_count: ($messages | tonumber),
     user_message_count: ($user_messages | tonumber),
     tools_used: $tools,
-    context_usage_percent: ($context_percent | tonumber)
+    context_usage_percent: ($context_percent | tonumber),
+    seven_day_utilization: $seven_day_util,
+    seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end)
   }')
 
 # ============================================================================
