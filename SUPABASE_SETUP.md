@@ -93,6 +93,8 @@ ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
 | user_message_count | int4 | - | Yes | No | No |
 | tools_used | text | - | Yes | No | No |
 | context_usage_percent | numeric | - | Yes | No | No |
+| seven_day_utilization | int4 | - | Yes | No | No |
+| seven_day_resets_at | timestamptz | - | Yes | No | No |
 
 5. Click **Save**
 
@@ -220,4 +222,4 @@ CREATE POLICY "Allow all" ON sessions
 
 ## Useful SQL Queries
 
-See [QUERIES.md](QUERIES.md) for example queries.
+See the [README.md](README.md#query-data-in-supabase) for example queries.

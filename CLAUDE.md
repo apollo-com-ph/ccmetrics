@@ -22,9 +22,9 @@ Claude Code Metrics Collection - A hook-based system that automatically collects
 6. On failure: queue payload; on success: process up to 10 queued items
 
 **Script structure:** `setup_ccmetrics.sh` is a self-contained installer with embedded heredocs for:
-- `send_claude_metrics.sh` (lines 307-502) - main hook with `__SUPABASE_URL__` and `__SUPABASE_KEY__` placeholders
-- `process_metrics_queue.sh` (lines 518-529) - wrapper that sets `HOOK_EVENT` env var
-- `settings.json` (lines 563-594) - Claude Code configuration with hooks and statusline
+- `send_claude_metrics.sh` (lines 307-566) - main hook with `__SUPABASE_URL__` and `__SUPABASE_KEY__` placeholders
+- `process_metrics_queue.sh` (lines 582-593) - wrapper that sets `HOOK_EVENT` env var
+- `settings.json` (lines 627-658) - Claude Code configuration with hooks and statusline
 
 ## Commands
 

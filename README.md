@@ -31,6 +31,7 @@ bash setup_ccmetrics.sh
 - Context usage percentage (% of model's context window used)
 - Tools used (Edit, Write, Bash, etc.)
 - Message counts
+- 7-day utilization metrics (usage % and reset time)
 
 **NOT collected:**
 - Conversation content
@@ -70,7 +71,9 @@ CREATE TABLE sessions (
   message_count INTEGER,
   user_message_count INTEGER,
   tools_used TEXT,
-  context_usage_percent NUMERIC(5,2)
+  context_usage_percent NUMERIC(5,2),
+  seven_day_utilization INTEGER,
+  seven_day_resets_at TIMESTAMPTZ
 );
 
 CREATE INDEX idx_developer ON sessions(developer);
