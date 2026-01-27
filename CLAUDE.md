@@ -17,23 +17,26 @@ cd /path/to/project && command    # Change directory first
 ## Architecture
 
 **Event-driven hook system:**
-- `SessionEnd` hook (`~/.claude/hooks/send_claude_metrics.sh`) - Extracts session metadata from Claude Code's JSON output, sends to Supabase REST API
-- `SessionStart` hook (`~/.claude/hooks/process_metrics_queue.sh`) - Calls main hook with `HOOK_EVENT=SessionStart` to retry queued payloads
+- `Statusline` hook (`~/.claude/hooks/ccmetrics_statusline.sh`) - Displays session metrics, caches data for SessionEnd
+- `SessionEnd` hook (`~/.claude/hooks/send_claude_metrics.sh`) - Reads cached metrics, sends to Supabase REST API
+- `SessionStart` hook (`~/.claude/hooks/process_metrics_queue.sh`) - Retries queued payloads, cleans up stale cache
 - Failed sends are queued to `~/.claude/metrics_queue/` as timestamped JSON files (max 100, oldest auto-deleted)
+- Metrics cache stored in `~/.claude/metrics_cache/` (one file per session_id)
 
 **Data flow:**
-1. Claude Code session ends → pipes session JSON to hook via stdin
-2. Hook extracts from stdin JSON: `session_id`, `model`, `cost.total_cost_usd`, `cost.total_duration_ms`, `context_window.total_input/output_tokens`
-3. Hook calculates `context_usage_percent` from total tokens and model's context limit
-4. Hook reads transcript file (if available) to count messages and tools used (no content extraction)
+1. During session: Statusline hook receives pre-calculated stats from Claude Code, caches to `~/.claude/metrics_cache/{session_id}.json`
+2. Session ends → SessionEnd hook reads cached metrics (cost, tokens, duration, context %)
+3. Hook reads transcript file to count messages and extract tools used (no content extraction)
+4. Payload logged to `~/.claude/ccmetrics.log` before sending
 5. POST to Supabase REST API (`/rest/v1/sessions`) with 5-second timeout
 6. On failure: queue payload; on success: process up to 10 queued items
+7. Cache file deleted after successful read; stale files cleaned up after 30 days
 
 **Script structure:** `setup_ccmetrics.sh` is a self-contained installer with embedded heredocs for:
-- `send_claude_metrics.sh` (lines 296-555) - main hook with `__SUPABASE_URL__` and `__SUPABASE_KEY__` placeholders
-- `process_metrics_queue.sh` (lines 571-582) - wrapper that sets `HOOK_EVENT` env var
-- `ccmetrics_statusline.sh` (lines 593-745) - custom statusline showing model, tokens, and context usage
-- `settings.json` (lines 779-810) - Claude Code configuration with hooks and statusline
+- `send_claude_metrics.sh` (lines 296-562) - main hook with `__SUPABASE_URL__` and `__SUPABASE_KEY__` placeholders
+- `process_metrics_queue.sh` (lines 578-589) - wrapper that sets `HOOK_EVENT` env var
+- `ccmetrics_statusline.sh` (lines 600-762) - custom statusline showing model, tokens, and context usage
+- `settings.json` (lines 796-827) - Claude Code configuration with hooks and statusline
 
 ## Commands
 
@@ -68,6 +71,7 @@ Custom bash script (`ccmetrics_statusline.sh`) displays comprehensive session me
 - Format: `[Model]%/min/$usd/inK/outK/totK /path`
 - Example: `[Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/projects/myapp`
 - Reads session JSON from stdin, extracts model/tokens/percentage/cost/duration/path using jq
+- **Caches session data** to `~/.claude/metrics_cache/{session_id}.json` for SessionEnd hook
 - Fixed-width formatting: model (10 chars), percentage (2 digits), duration (4 digits), cost (4 chars), tokens (4 chars each)
 - Project path truncates from left if terminal width insufficient
 - Easily customizable by editing the script
@@ -90,18 +94,25 @@ CREATE TABLE sessions (
   user_message_count INTEGER,
   tools_used TEXT,
   context_usage_percent NUMERIC(5,2),
+  model TEXT,
   seven_day_utilization INTEGER,
   seven_day_resets_at TIMESTAMPTZ
 );
 ```
 
+**To add model column to existing table:**
+```sql
+ALTER TABLE sessions ADD COLUMN model TEXT;
+```
+
 RLS must be disabled or have permissive policy for anon key to write.
 
-## Model Context Limits
+## Metrics Cache
 
-Context usage percentage is calculated using hardcoded model limits (all currently 200K tokens):
-- `claude-opus-4*`, `claude-sonnet-4*`, `claude-haiku-3*`
-- `claude-3-5-sonnet*`, `claude-3-5-haiku*`
-- `claude-3-opus*`, `claude-3-sonnet*`, `claude-3-haiku*`
+Session metrics (cost, tokens, duration, context %) are cached by the statusline hook and read by the SessionEnd hook:
+- Cache location: `~/.claude/metrics_cache/{session_id}.json`
+- Contains pre-calculated values from Claude Code (no manual calculation needed)
+- Cache file deleted after SessionEnd reads it
+- Stale files (older than 30 days) cleaned up on SessionStart
 
-Unknown models default to 200K. Update `MODEL_LIMITS` in the hook script if limits change.
+**Note:** If cache file doesn't exist (very short session where statusline never ran), defaults to zero values.

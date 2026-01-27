@@ -50,6 +50,7 @@ CREATE TABLE sessions (
   user_message_count INTEGER,
   tools_used TEXT,
   context_usage_percent NUMERIC(5,2),
+  model TEXT,
   seven_day_utilization INTEGER,
   seven_day_resets_at TIMESTAMPTZ
 );
@@ -93,6 +94,7 @@ ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
 | user_message_count | int4 | - | Yes | No | No |
 | tools_used | text | - | Yes | No | No |
 | context_usage_percent | numeric | - | Yes | No | No |
+| model | text | - | Yes | No | No |
 | seven_day_utilization | int4 | - | Yes | No | No |
 | seven_day_resets_at | timestamptz | - | Yes | No | No |
 

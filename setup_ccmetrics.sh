@@ -308,31 +308,17 @@ set -euo pipefail
 SUPABASE_URL="__SUPABASE_URL__"
 SUPABASE_KEY="__SUPABASE_KEY__"
 
-# Queue configuration
+# Queue and cache configuration
 QUEUE_DIR="$HOME/.claude/metrics_queue"
+METRICS_CACHE_DIR="$HOME/.claude/metrics_cache"
 LOG_FILE="$HOME/.claude/ccmetrics.log"
 MAX_QUEUE_SIZE=100  # Maximum queued payloads before cleanup
-
-# ============================================================================
-# MODEL CONTEXT LIMITS
-# ============================================================================
-# Model context window limits (tokens)
-declare -A MODEL_LIMITS=(
-  ["claude-opus-4"]="200000"
-  ["claude-sonnet-4"]="200000"
-  ["claude-haiku-3"]="200000"
-  ["claude-3-5-sonnet"]="200000"
-  ["claude-3-5-haiku"]="200000"
-  ["claude-3-opus"]="200000"
-  ["claude-3-sonnet"]="200000"
-  ["claude-3-haiku"]="200000"
-)
-DEFAULT_LIMIT="200000"
 
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
 mkdir -p "$QUEUE_DIR"
+mkdir -p "$METRICS_CACHE_DIR"
 touch "$LOG_FILE"
 
 # ============================================================================
@@ -422,6 +408,8 @@ process_queue() {
 # Check if this is a SessionStart hook call (for processing queue)
 if [ "${HOOK_EVENT:-}" = "SessionStart" ]; then
     log "🔄 SessionStart detected - processing queue"
+    # Clean up stale cache files older than 30 days
+    find "$METRICS_CACHE_DIR" -name "*.json" -mtime +30 -delete 2>/dev/null || true
     process_queue
     exit 0
 fi
@@ -436,43 +424,59 @@ if [ -z "$SESSION_DATA" ] || [ "$SESSION_DATA" = "{}" ]; then
 fi
 
 # ============================================================================
-# EXTRACT METADATA (NO CONVERSATION CONTENT)
+# EXTRACT SESSION INFO FROM STDIN
 # ============================================================================
 
 SESSION_ID=$(echo "$SESSION_DATA" | jq -r '.session_id // "unknown"')
-PROJECT_DIR=$(echo "$SESSION_DATA" | jq -r '.workspace.project_dir // .cwd // "unknown"')
-TOTAL_COST=$(echo "$SESSION_DATA" | jq -r '.cost.total_cost_usd // 0')
-DURATION_MS=$(echo "$SESSION_DATA" | jq -r '.cost.total_duration_ms // 0')
-INPUT_TOKENS=$(echo "$SESSION_DATA" | jq -r '.context_window.total_input_tokens // 0')
-OUTPUT_TOKENS=$(echo "$SESSION_DATA" | jq -r '.context_window.total_output_tokens // 0')
+PROJECT_DIR=$(echo "$SESSION_DATA" | jq -r '.cwd // "unknown"')
 TRANSCRIPT_PATH=$(echo "$SESSION_DATA" | jq -r '.transcript_path // ""')
-MODEL=$(echo "$SESSION_DATA" | jq -r '.model // "unknown"')
+
+# ============================================================================
+# READ CACHED METRICS FROM STATUSLINE HOOK
+# ============================================================================
+
+CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}.json"
+
+if [ -f "$CACHE_FILE" ]; then
+    log "📂 Reading cached metrics for session $SESSION_ID"
+    CACHED_DATA=$(cat "$CACHE_FILE")
+
+    # Extract pre-calculated values from cache (set by statusline hook)
+    MODEL=$(echo "$CACHED_DATA" | jq -r '.model.display_name // .model.id // "unknown"')
+    TOTAL_COST=$(echo "$CACHED_DATA" | jq -r '.cost.total_cost_usd // 0')
+    DURATION_MS=$(echo "$CACHED_DATA" | jq -r '.cost.total_duration_ms // 0')
+    INPUT_TOKENS=$(echo "$CACHED_DATA" | jq -r '.context_window.total_input_tokens // 0')
+    OUTPUT_TOKENS=$(echo "$CACHED_DATA" | jq -r '.context_window.total_output_tokens // 0')
+    CONTEXT_PERCENT=$(echo "$CACHED_DATA" | jq -r '.context_window.used_percentage // 0')
+
+    # Clean up cache file after reading
+    rm -f "$CACHE_FILE"
+else
+    log "⚠️  No cache file found for session $SESSION_ID, using defaults"
+    MODEL="unknown"
+    TOTAL_COST=0
+    DURATION_MS=0
+    INPUT_TOKENS=0
+    OUTPUT_TOKENS=0
+    CONTEXT_PERCENT=0
+fi
 
 # Calculate duration in minutes
 DURATION_MIN=$(echo "scale=2; $DURATION_MS / 60000" | bc 2>/dev/null || echo "0")
 
-# Get context limit for model (match by prefix)
-CONTEXT_LIMIT="$DEFAULT_LIMIT"
-for model_prefix in "${!MODEL_LIMITS[@]}"; do
-  if [[ "$MODEL" == "$model_prefix"* ]]; then
-    CONTEXT_LIMIT="${MODEL_LIMITS[$model_prefix]}"
-    break
-  fi
-done
+# ============================================================================
+# COUNT MESSAGES AND TOOLS FROM TRANSCRIPT
+# ============================================================================
 
-# Calculate context usage percentage
-TOTAL_TOKENS=$((INPUT_TOKENS + OUTPUT_TOKENS))
-CONTEXT_PERCENT=$(echo "scale=2; $TOTAL_TOKENS * 100 / $CONTEXT_LIMIT" | bc 2>/dev/null || echo "0")
-
-# Count messages WITHOUT reading content
 MSG_COUNT=0
 USER_MSG_COUNT=0
 TOOLS=""
 
 if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-    MSG_COUNT=$(cat "$TRANSCRIPT_PATH" 2>/dev/null | jq -s '[.[] | select(.type == "user" or .type == "assistant")] | length' || echo 0)
-    USER_MSG_COUNT=$(cat "$TRANSCRIPT_PATH" 2>/dev/null | jq -s '[.[] | select(.type == "user")] | length' || echo 0)
-    TOOLS=$(cat "$TRANSCRIPT_PATH" 2>/dev/null | jq -s '[.[] | select(.type == "tool_use") | .name] | unique | join(", ")' || echo "")
+    MSG_COUNT=$(jq -s '[.[] | select(.type == "user" or .type == "assistant")] | length' "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
+    USER_MSG_COUNT=$(jq -s '[.[] | select(.type == "user")] | length' "$TRANSCRIPT_PATH" 2>/dev/null || echo 0)
+    # Tools are nested inside assistant message content
+    TOOLS=$(jq -rs '[.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use") | .name] | unique | join(", ")' "$TRANSCRIPT_PATH" 2>/dev/null || echo "")
 fi
 
 # ============================================================================
@@ -520,6 +524,7 @@ PAYLOAD=$(jq -n \
   --arg user_messages "$USER_MSG_COUNT" \
   --arg tools "$TOOLS" \
   --arg context_percent "$CONTEXT_PERCENT" \
+  --arg model "$MODEL" \
   --argjson seven_day_util "$SEVEN_DAY_UTIL" \
   --arg seven_day_resets "$SEVEN_DAY_RESETS" \
   '{
@@ -535,6 +540,7 @@ PAYLOAD=$(jq -n \
     user_message_count: ($user_messages | tonumber),
     tools_used: $tools,
     context_usage_percent: ($context_percent | tonumber),
+    model: $model,
     seven_day_utilization: $seven_day_util,
     seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end)
   }')
@@ -544,6 +550,7 @@ PAYLOAD=$(jq -n \
 # ============================================================================
 
 log "📊 Processing session: $SESSION_ID"
+log "📤 Payload: $PAYLOAD"
 
 if send_to_supabase "$PAYLOAD"; then
     process_queue
@@ -599,8 +606,18 @@ set -euo pipefail
 # Shows: [Model]%/min/$usd/inK/outK/totK /path
 #############################################################################
 
+# Cache directory for metrics (shared with SessionEnd hook)
+METRICS_CACHE_DIR="$HOME/.claude/metrics_cache"
+mkdir -p "$METRICS_CACHE_DIR"
+
 # Read session data from stdin
 INPUT=$(cat)
+
+# Cache session data for SessionEnd hook to read
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+if [ -n "$SESSION_ID" ]; then
+    echo "$INPUT" > "${METRICS_CACHE_DIR}/${SESSION_ID}.json"
+fi
 
 # Extract data using jq
 MODEL=$(echo "$INPUT" | jq -r '.model.display_name // .model.id // "Unknown"')

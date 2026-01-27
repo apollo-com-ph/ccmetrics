@@ -71,6 +71,7 @@ CREATE TABLE sessions (
   user_message_count INTEGER,
   tools_used TEXT,
   context_usage_percent NUMERIC(5,2),
+  model TEXT,
   seven_day_utilization INTEGER,
   seven_day_resets_at TIMESTAMPTZ
 );
