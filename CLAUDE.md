@@ -28,7 +28,7 @@ git status
 
 **Config** (`~/.claude/.ccmetrics-config.json`): `developer_email`, `supabase_url`, `supabase_key`
 
-**Data flow:** Statusline caches metrics → SessionEnd reads cache + transcript → POST to Supabase → on failure, queue for retry
+**Data flow:** Statusline caches metrics → SessionEnd reads cache + transcript → POST to Supabase (empty payloads with 0 tokens, 0 cost, unknown model are skipped) → on failure, queue for retry
 
 ## Commands
 

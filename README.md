@@ -106,9 +106,11 @@ tail -f ~/.claude/ccmetrics.log
 
 Once installed, metrics are collected automatically:
 
-- **SessionEnd**: Data sent to Supabase
+- **SessionEnd**: Data sent to Supabase (skips empty sessions with no tokens/cost)
 - **SessionStart**: Retries any queued failed sends
 - **StatusLine**: Real-time usage display (if configured)
+
+Empty payloads (0 tokens, $0 cost, unknown model) are automatically skipped to avoid cluttering the database.
 
 ## Statusline Display
 

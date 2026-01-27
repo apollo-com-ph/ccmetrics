@@ -667,6 +667,18 @@ PAYLOAD=$(jq -n \
   }')
 
 # ============================================================================
+# SKIP EMPTY PAYLOADS
+# ============================================================================
+
+# Skip if no meaningful metrics (no tokens, no cost, unknown model)
+if [[ "$INPUT_TOKENS" -eq 0 && "$OUTPUT_TOKENS" -eq 0 && "$MODEL" == "unknown" ]]; then
+    if [ "$(echo "$TOTAL_COST == 0" | bc -l)" -eq 1 ]; then
+        log "⏭️  Skipping empty payload - no meaningful metrics (0 tokens, \$0 cost, unknown model)"
+        exit 0
+    fi
+fi
+
+# ============================================================================
 # SEND TO SUPABASE (WITH QUEUE ON FAILURE)
 # ============================================================================
 
