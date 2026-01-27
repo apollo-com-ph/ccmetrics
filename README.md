@@ -44,21 +44,21 @@ bash setup_ccmetrics.sh
 
 - Claude Code installed
 - Supabase account (free tier)
-- Dependencies: `jq`, `bc`, `curl`, `sed`, `awk`
+- Dependencies: `jq`, `curl`, `awk`
 
 Install before running setup:
 ```bash
 # macOS
-brew install jq bc curl
+brew install jq curl
 
 # Ubuntu/Debian
-sudo apt install jq bc curl
+sudo apt install jq curl
 
 # Fedora/RHEL
-sudo dnf install jq bc curl
+sudo dnf install jq curl
 ```
 
-Note: `sed`, `awk`, and `curl` are pre-installed on most Unix systems.
+Note: `awk` and `curl` are pre-installed on most Unix systems.
 
 ## Setup
 

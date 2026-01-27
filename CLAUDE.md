@@ -40,7 +40,7 @@ ls ~/.claude/metrics_queue/ | wc -l       # Queue size
 
 ## Dependencies
 
-`jq`, `bc`, `curl`, `sed`, `awk` - install before running setup (see README)
+`jq`, `curl`, `awk` - install before running setup (see README). Note: `awk` and `curl` are pre-installed on most Unix systems.
 
 ## Statusline
 
