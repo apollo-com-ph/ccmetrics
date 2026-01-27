@@ -33,10 +33,10 @@ cd /path/to/project && command    # Change directory first
 7. Cache file deleted after successful read; stale files cleaned up after 30 days
 
 **Script structure:** `setup_ccmetrics.sh` is a self-contained installer with embedded heredocs for:
-- `send_claude_metrics.sh` (lines 330-630) - main hook that reads credentials from `.ccmetrics-config.json`
-- `process_metrics_queue.sh` (lines 641-652) - wrapper that sets `HOOK_EVENT` env var
-- `ccmetrics_statusline.sh` (lines 663-825) - custom statusline showing model, tokens, and context usage
-- `settings.json` (lines 859-890) - Claude Code configuration with hooks and statusline
+- `send_claude_metrics.sh` (lines 365-665) - main hook that reads credentials from `.ccmetrics-config.json`
+- `process_metrics_queue.sh` (lines 676-687) - wrapper that sets `HOOK_EVENT` env var
+- `ccmetrics_statusline.sh` (lines 698-860) - custom statusline showing model, tokens, and context usage
+- `settings.json` (lines 894-925) - Claude Code configuration with hooks and statusline
 
 **Configuration file:** Setup creates `~/.claude/.ccmetrics-config.json` containing:
 - `developer_email` - work email (prompted first during setup)

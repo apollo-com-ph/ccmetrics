@@ -82,7 +82,7 @@ CREATE INDEX idx_created_at ON sessions(created_at);
 
 4. Get credentials from Settings → API:
    - Project URL
-   - `anon` public key
+   - Publishable key (starts with `sb_publishable_`) or legacy `anon` public key
 
 ### 2. Run Setup Script
 ```bash

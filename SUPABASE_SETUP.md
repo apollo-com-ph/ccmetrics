@@ -111,8 +111,9 @@ Project URL: https://xxxxxxxxxxxxx.supabase.co
 ```
 
 3. Under "Project API keys":
-   - Copy **`anon` public** key (starts with `eyJhbGc...`)
-   - This is safe to use in hooks (has RLS restrictions if enabled)
+   - Copy **Publishable** key (starts with `sb_publishable_`) - preferred
+   - Or legacy **`anon` public** key (starts with `eyJhbGc...`) - deprecated but still works
+   - These keys are safe to use in hooks (have RLS restrictions if enabled)
 
 4. **Save both values** - you'll need them for setup!
 
