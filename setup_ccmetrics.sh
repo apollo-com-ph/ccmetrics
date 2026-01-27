@@ -100,12 +100,12 @@ print_install_instructions() {
     echo ""
     print_info "Install missing dependencies:"
     echo ""
-    echo "  macOS:        brew install jq bc curl"
-    echo "  Ubuntu/Debian: sudo apt install jq bc curl"
-    echo "  Fedora/RHEL:  sudo dnf install jq bc curl"
-    echo "  Arch:         sudo pacman -S jq bc curl"
+    echo "  macOS:        brew install jq curl"
+    echo "  Ubuntu/Debian: sudo apt install jq curl"
+    echo "  Fedora/RHEL:  sudo dnf install jq curl"
+    echo "  Arch:         sudo pacman -S jq curl"
     echo ""
-    print_info "Note: sed, awk, and curl are pre-installed on most Unix systems."
+    print_info "Note: awk and curl are pre-installed on most Unix systems."
     echo ""
 }
 
@@ -122,14 +122,6 @@ check_dependencies() {
         print_success "jq found: $(jq --version)"
     fi
 
-    # Check bc
-    if ! command_exists bc; then
-        print_warning "bc not found"
-        missing_deps+=("bc")
-    else
-        print_success "bc found"
-    fi
-
     # Check curl
     if ! command_exists curl; then
         print_warning "curl not found"
@@ -138,15 +130,7 @@ check_dependencies() {
         print_success "curl found"
     fi
 
-    # Check sed
-    if ! command_exists sed; then
-        print_warning "sed not found"
-        missing_deps+=("sed")
-    else
-        print_success "sed found"
-    fi
-
-    # Check awk
+    # Check awk (used for floating-point math)
     if ! command_exists awk; then
         print_warning "awk not found"
         missing_deps+=("awk")
@@ -489,7 +473,7 @@ else
 fi
 
 # Calculate duration in minutes
-DURATION_MIN=$(echo "scale=2; $DURATION_MS / 60000" | bc 2>/dev/null || echo "0")
+DURATION_MIN=$(awk "BEGIN {printf \"%.2f\", $DURATION_MS / 60000}" 2>/dev/null || echo "0")
 
 # ============================================================================
 # COUNT MESSAGES AND TOOLS FROM TRANSCRIPT
@@ -599,7 +583,7 @@ PAYLOAD=$(jq -n \
 
 # Skip if no meaningful metrics (no tokens, no cost, unknown model)
 if [[ "$INPUT_TOKENS" -eq 0 && "$OUTPUT_TOKENS" -eq 0 && "$MODEL" == "unknown" ]]; then
-    if [ "$(echo "$TOTAL_COST == 0" | bc -l)" -eq 1 ]; then
+    if [ "$(awk "BEGIN {print ($TOTAL_COST == 0) ? 1 : 0}")" -eq 1 ]; then
         log "⏭️  Skipping empty payload - no meaningful metrics (0 tokens, \$0 cost, unknown model)"
         exit 0
     fi
@@ -695,14 +679,14 @@ format_model() {
 # Format percentage: 2 chars + "%", left padded with 0, whole numbers
 format_percentage() {
     local pct="$1"
-    local rounded=$(echo "($pct + 0.5) / 1" | bc)
+    local rounded=$(awk "BEGIN {printf \"%.0f\", $pct + 0.5}")
     printf "%02d%%" "$rounded"
 }
 
 # Format duration: 4 chars, minutes, left padded with 0
 format_duration() {
     local ms="$1"
-    local minutes=$(echo "($ms + 30000) / 60000" | bc)
+    local minutes=$(awk "BEGIN {printf \"%.0f\", ($ms + 30000) / 60000}")
     printf "%04d" "$minutes"
 }
 
@@ -711,25 +695,26 @@ format_cost() {
     local cost="$1"
 
     # Handle zero or very small values
-    if [ "$(echo "$cost < 0.05" | bc)" -eq 1 ]; then
+    if [ "$(awk "BEGIN {print ($cost < 0.05) ? 1 : 0}")" -eq 1 ]; then
         echo "\$0.0"
         return
     fi
 
     # $0.1-$0.9: "$0.X" (1 decimal)
-    if [ "$(echo "$cost < 1.0" | bc)" -eq 1 ]; then
-        printf "\$0.%.0f" "$(echo "$cost * 10" | bc | sed 's/\..*//')"
+    if [ "$(awk "BEGIN {print ($cost < 1.0) ? 1 : 0}")" -eq 1 ]; then
+        local tenths=$(awk "BEGIN {printf \"%.0f\", $cost * 10}")
+        printf "\$0.%s" "$tenths"
         return
     fi
 
     # $1.0-$9.9: "$X.X" (1 decimal)
-    if [ "$(echo "$cost < 10.0" | bc)" -eq 1 ]; then
+    if [ "$(awk "BEGIN {print ($cost < 10.0) ? 1 : 0}")" -eq 1 ]; then
         printf "\$%.1f" "$cost"
         return
     fi
 
     # $10-$99: "$XX " (space padded right)
-    if [ "$(echo "$cost < 100.0" | bc)" -eq 1 ]; then
+    if [ "$(awk "BEGIN {print ($cost < 100.0) ? 1 : 0}")" -eq 1 ]; then
         printf "\$%2.0f " "$cost"
         return
     fi
@@ -748,24 +733,22 @@ format_tokens() {
         return
     fi
 
-    # Convert to K
-    local k_value=$(echo "scale=1; $tokens / 1000" | bc)
-
     # 1000-9999: "X.XK" (1 decimal)
     if [ "$tokens" -lt 10000 ]; then
-        printf "%.1fK" "$k_value"
+        local k_value=$(awk "BEGIN {printf \"%.1f\", $tokens / 1000}")
+        printf "%sK" "$k_value"
         return
     fi
 
     # 10000-99999: " XXK" (space padded)
     if [ "$tokens" -lt 100000 ]; then
-        local k_int=$(echo "$tokens / 1000" | bc)
+        local k_int=$(awk "BEGIN {printf \"%.0f\", $tokens / 1000}")
         printf "%3dK" "$k_int"
         return
     fi
 
     # 100000-999999: "XXXK"
-    local k_int=$(echo "$tokens / 1000" | bc)
+    local k_int=$(awk "BEGIN {printf \"%.0f\", $tokens / 1000}")
     printf "%3dK" "$k_int"
 }
 
