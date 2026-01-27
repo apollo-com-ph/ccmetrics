@@ -60,10 +60,17 @@ CREATE TABLE sessions (
 CREATE INDEX idx_developer ON sessions(developer);
 CREATE INDEX idx_created_at ON sessions(created_at);
 
--- Disable Row Level Security (RLS) for simplicity
--- WARNING: Only do this if you trust all API key holders
-ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
+-- Enable Row Level Security with write-only policy
+-- This allows developers to submit metrics but not read/modify others' data
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow insert for anon" ON sessions
+  FOR INSERT
+  TO anon
+  WITH CHECK (true);
 ```
+
+> **Security Note:** With RLS enabled and only an INSERT policy defined, developers with the publishable key can submit metrics but cannot SELECT, UPDATE, or DELETE any records. Admins can access all data via the Supabase dashboard or using the `service_role` key.
 
 4. Click **Run** (or press Ctrl/Cmd + Enter)
 5. Verify success message appears
@@ -75,7 +82,7 @@ ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
 3. Configure:
    - **Name**: `sessions`
    - **Description**: "Claude Code session metadata"
-   - Enable **Enable RLS**: OFF (for simplicity)
+   - **Enable RLS**: ON (recommended for security)
 
 4. Add columns:
 
@@ -102,6 +109,16 @@ ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
 
 5. Click **Save**
 
+6. **Create RLS Policy** (if RLS is enabled):
+   - Go to **SQL Editor** → **New query**
+   - Run:
+   ```sql
+   CREATE POLICY "Allow insert for anon" ON sessions
+     FOR INSERT
+     TO anon
+     WITH CHECK (true);
+   ```
+
 **Note:** The `developer` field stores the work email address entered during setup. The `claude_account_email` field stores the actual Anthropic account email (fetched automatically from OAuth).
 
 ## Step 5: Get API Credentials
@@ -127,14 +144,7 @@ Test your setup (before running the install script):
 SUPABASE_URL="https://xxxxxxxxxxxxx.supabase.co"
 SUPABASE_KEY="eyJhbGc..."
 
-# Test read access
-curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
-  -H "apikey: ${SUPABASE_KEY}" \
-  -H "Authorization: Bearer ${SUPABASE_KEY}"
-
-# Should return: []
-
-# Test write access
+# Test write access (should succeed)
 curl -X POST "${SUPABASE_URL}/rest/v1/sessions" \
   -H "apikey: ${SUPABASE_KEY}" \
   -H "Authorization: Bearer ${SUPABASE_KEY}" \
@@ -153,8 +163,19 @@ curl -X POST "${SUPABASE_URL}/rest/v1/sessions" \
     "user_message_count": 1,
     "tools_used": "test"
   }'
-
 # Should return: HTTP 201 (success)
+
+# Test read access (should fail - RLS blocks reads)
+curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
+  -H "apikey: ${SUPABASE_KEY}" \
+  -H "Authorization: Bearer ${SUPABASE_KEY}"
+# Should return: [] (empty array - no read access)
+
+# Test delete access (should fail - RLS blocks deletes)
+curl -X DELETE "${SUPABASE_URL}/rest/v1/sessions?session_id=eq.test-123" \
+  -H "apikey: ${SUPABASE_KEY}" \
+  -H "Authorization: Bearer ${SUPABASE_KEY}"
+# Should return: HTTP 204 but no rows affected
 ```
 
 After installation, credentials are stored in `~/.claude/.ccmetrics-config.json`:
@@ -200,21 +221,26 @@ GROUP BY developer, project_path;
 
 ## Common Issues
 
-### "Row Level Security" errors
+### "Row Level Security" errors on INSERT
 
-If you get RLS errors:
+If inserts are failing with RLS errors, verify the policy exists:
 ```sql
-ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
-```
+-- Check existing policies
+SELECT * FROM pg_policies WHERE tablename = 'sessions';
 
-Or create policy:
-```sql
--- Allow all operations for now (tighten later)
-CREATE POLICY "Allow all" ON sessions
-  FOR ALL
-  USING (true)
+-- If missing, create the write-only policy
+CREATE POLICY "Allow insert for anon" ON sessions
+  FOR INSERT
+  TO anon
   WITH CHECK (true);
 ```
+
+### Cannot read data with publishable key
+
+This is expected behavior. With write-only RLS, the publishable key can only INSERT data. To read data:
+- Use the **Supabase Dashboard** → Table Editor
+- Use the `service_role` key (keep this secret, never distribute to developers)
+- Query via SQL Editor in the dashboard
 
 ### Connection refused
 
