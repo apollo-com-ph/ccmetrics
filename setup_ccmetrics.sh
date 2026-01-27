@@ -365,32 +365,32 @@ log() {
 # READ CONFIGURATION
 # ============================================================================
 
-CONFIG_FILE="\$HOME/.claude/.ccmetrics-config.json"
+CONFIG_FILE="$HOME/.claude/.ccmetrics-config.json"
 
 # Set defaults
-DEVELOPER_EMAIL="\$USER"
+DEVELOPER_EMAIL="$USER"
 SUPABASE_URL=""
 SUPABASE_KEY=""
 
-if [ -f "\$CONFIG_FILE" ]; then
+if [ -f "$CONFIG_FILE" ]; then
     # Read all config values
-    DEVELOPER_EMAIL=\$(jq -r '.developer_email // empty' "\$CONFIG_FILE" 2>/dev/null)
-    SUPABASE_URL=\$(jq -r '.supabase_url // empty' "\$CONFIG_FILE" 2>/dev/null)
-    SUPABASE_KEY=\$(jq -r '.supabase_key // empty' "\$CONFIG_FILE" 2>/dev/null)
+    DEVELOPER_EMAIL=$(jq -r '.developer_email // empty' "$CONFIG_FILE" 2>/dev/null)
+    SUPABASE_URL=$(jq -r '.supabase_url // empty' "$CONFIG_FILE" 2>/dev/null)
+    SUPABASE_KEY=$(jq -r '.supabase_key // empty' "$CONFIG_FILE" 2>/dev/null)
 
     # Validate critical fields
-    if [ -z "\$SUPABASE_URL" ] || [ -z "\$SUPABASE_KEY" ]; then
+    if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
         log "❌ ERROR: Missing Supabase credentials in config file"
         exit 1
     fi
 
-    # Email can fallback to \$USER if missing
-    if [ -z "\$DEVELOPER_EMAIL" ]; then
-        DEVELOPER_EMAIL="\$USER"
-        log "⚠️  Failed to read email from config, using \\\$USER: \$USER"
+    # Email can fallback to $USER if missing
+    if [ -z "$DEVELOPER_EMAIL" ]; then
+        DEVELOPER_EMAIL="$USER"
+        log "⚠️  Failed to read email from config, using \$USER: $USER"
     fi
 else
-    log "❌ ERROR: Config file not found at \$CONFIG_FILE"
+    log "❌ ERROR: Config file not found at $CONFIG_FILE"
     exit 1
 fi
 
