@@ -245,22 +245,58 @@ check_dependencies() {
 collect_config() {
     print_step "Configuration Setup"
     echo ""
-    
-    # Supabase URL
+
+    # Load existing config as defaults if available
+    local config_file="$CLAUDE_DIR/.ccmetrics-config.json"
+    local EXISTING_EMAIL=""
+    local EXISTING_URL=""
+    local EXISTING_KEY=""
+
+    if [ -f "$config_file" ]; then
+        print_info "Found existing configuration. Press Enter to keep current values."
+        EXISTING_EMAIL=$(jq -r '.developer_email // empty' "$config_file" 2>/dev/null)
+        EXISTING_URL=$(jq -r '.supabase_url // empty' "$config_file" 2>/dev/null)
+        EXISTING_KEY=$(jq -r '.supabase_key // empty' "$config_file" 2>/dev/null)
+        echo ""
+    fi
+
+    # Work Email (first prompt)
+    local default_email="${EXISTING_EMAIL:-${USER}@${HOSTNAME}}"
+    read -p "Enter your work email (default: $default_email): " WORK_EMAIL
+    WORK_EMAIL=${WORK_EMAIL:-$default_email}
+
+    if [[ ! $WORK_EMAIL =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        print_warning "Email format may be invalid, but continuing..."
+    fi
+    echo ""
+
+    # Supabase URL (second prompt)
     while true; do
-        read -p "Enter your Supabase Project URL (e.g., https://xxxxx.supabase.co): " SUPABASE_URL
+        if [ -n "$EXISTING_URL" ]; then
+            read -p "Enter your Supabase Project URL (default: $EXISTING_URL): " SUPABASE_URL
+            SUPABASE_URL=${SUPABASE_URL:-$EXISTING_URL}
+        else
+            read -p "Enter your Supabase Project URL (e.g., https://xxxxx.supabase.co): " SUPABASE_URL
+        fi
+
         if [[ $SUPABASE_URL =~ ^https://.*\.supabase\.co$ ]]; then
             break
         else
             print_error "Invalid Supabase URL format. Should be: https://xxxxx.supabase.co"
         fi
     done
-    
-    # Supabase API Key
+
+    # Supabase API Key (third prompt)
     while true; do
-        read -p "Enter your Supabase publishable key (starts with sb_publishable_): " SUPABASE_KEY
+        if [ -n "$EXISTING_KEY" ]; then
+            read -p "Enter your Supabase publishable key (default: [existing]): " SUPABASE_KEY
+            SUPABASE_KEY=${SUPABASE_KEY:-$EXISTING_KEY}
+        else
+            read -p "Enter your Supabase publishable key (starts with sb_publishable_): " SUPABASE_KEY
+        fi
+
         if [ -n "$SUPABASE_KEY" ]; then
-            # Validate publishable key format
+            # Validate publishable key format (skip if using existing key)
             if [[ ! $SUPABASE_KEY =~ ^sb_publishable_ ]]; then
                 print_warning "Key doesn't start with 'sb_publishable_'. Legacy anon keys are deprecated."
                 read -p "Continue anyway? (y/n) " -n 1 -r
@@ -275,17 +311,6 @@ collect_config() {
             print_error "API key cannot be empty"
         fi
     done
-
-    # ADDITION: Work Email Prompt
-    DEFAULT_EMAIL="${USER}@${HOSTNAME}"
-    echo ""
-    read -p "Enter your work email (default: $DEFAULT_EMAIL): " WORK_EMAIL
-    WORK_EMAIL=${WORK_EMAIL:-$DEFAULT_EMAIL}
-
-    # Basic email validation
-    if [[ ! $WORK_EMAIL =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        print_warning "Email format may be invalid, but continuing..."
-    fi
 
     echo ""
     print_success "Configuration collected"

@@ -39,10 +39,11 @@ cd /path/to/project && command    # Change directory first
 - `settings.json` (lines 859-890) - Claude Code configuration with hooks and statusline
 
 **Configuration file:** Setup creates `~/.claude/.ccmetrics-config.json` containing:
-- `developer_email` - work email collected during setup
+- `developer_email` - work email (prompted first during setup)
 - `supabase_url` - Supabase project URL
 - `supabase_key` - Supabase publishable key (or legacy anon key)
 - File is chmod 600 (only user can read/write)
+- **Re-running setup uses existing values as defaults** (press Enter to keep current values)
 
 ## Commands
 
