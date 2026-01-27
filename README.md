@@ -44,10 +44,21 @@ bash setup_ccmetrics.sh
 
 - Claude Code installed
 - Supabase account (free tier)
-- Dependencies (auto-installed):
-  - `jq` - JSON processor
-  - `bc` - Calculator
-  - `curl` - HTTP client
+- Dependencies: `jq`, `bc`, `curl`, `sed`, `awk`
+
+Install before running setup:
+```bash
+# macOS
+brew install jq bc curl
+
+# Ubuntu/Debian
+sudo apt install jq bc curl
+
+# Fedora/RHEL
+sudo dnf install jq bc curl
+```
+
+Note: `sed`, `awk`, and `curl` are pre-installed on most Unix systems.
 
 ## Setup
 
@@ -225,6 +236,10 @@ ORDER BY date DESC;
 ```
 
 ## Troubleshooting
+
+### Queue Management
+
+Failed submissions are queued in `~/.claude/metrics_queue/`. The queue has a maximum size of 100 items - oldest entries are automatically removed when exceeded.
 
 ### Hook not running
 ```bash

@@ -93,79 +93,27 @@ check_not_root() {
 }
 
 #############################################################################
-# DEPENDENCY INSTALLATION
+# DEPENDENCY CHECKING
 #############################################################################
 
-install_jq() {
-    print_step "Installing jq (JSON processor)..."
-    
-    case "$OS" in
-        macos)
-            if command_exists brew; then
-                brew install jq
-            else
-                print_error "Homebrew not found. Please install Homebrew first:"
-                print_info "Visit: https://brew.sh"
-                exit 1
-            fi
-            ;;
-        ubuntu|debian)
-            sudo apt-get update
-            sudo apt-get install -y jq
-            ;;
-        fedora|rhel|centos)
-            sudo yum install -y jq
-            ;;
-        arch)
-            sudo pacman -S jq
-            ;;
-        *)
-            print_error "Unsupported OS for automatic jq installation"
-            print_info "Please install jq manually: https://stedolan.github.io/jq/download/"
-            exit 1
-            ;;
-    esac
-    
-    print_success "jq installed"
+print_install_instructions() {
+    echo ""
+    print_info "Install missing dependencies:"
+    echo ""
+    echo "  macOS:        brew install jq bc curl"
+    echo "  Ubuntu/Debian: sudo apt install jq bc curl"
+    echo "  Fedora/RHEL:  sudo dnf install jq bc curl"
+    echo "  Arch:         sudo pacman -S jq bc curl"
+    echo ""
+    print_info "Note: sed, awk, and curl are pre-installed on most Unix systems."
+    echo ""
 }
-
-install_bc() {
-    print_step "Installing bc (calculator)..."
-    
-    case "$OS" in
-        macos)
-            if command_exists brew; then
-                brew install bc
-            else
-                print_error "Homebrew not found"
-                exit 1
-            fi
-            ;;
-        ubuntu|debian)
-            sudo apt-get update
-            sudo apt-get install -y bc
-            ;;
-        fedora|rhel|centos)
-            sudo yum install -y bc
-            ;;
-        arch)
-            sudo pacman -S bc
-            ;;
-        *)
-            print_error "Unsupported OS for automatic bc installation"
-            exit 1
-            ;;
-    esac
-    
-    print_success "bc installed"
-}
-
 
 check_dependencies() {
     print_step "Checking dependencies..."
-    
+
     local missing_deps=()
-    
+
     # Check jq
     if ! command_exists jq; then
         print_warning "jq not found"
@@ -173,7 +121,7 @@ check_dependencies() {
     else
         print_success "jq found: $(jq --version)"
     fi
-    
+
     # Check bc
     if ! command_exists bc; then
         print_warning "bc not found"
@@ -181,60 +129,39 @@ check_dependencies() {
     else
         print_success "bc found"
     fi
-    
+
     # Check curl
     if ! command_exists curl; then
-        print_error "curl is required but not found"
-        print_info "Please install curl and try again"
-        exit 1
+        print_warning "curl not found"
+        missing_deps+=("curl")
     else
         print_success "curl found"
     fi
 
     # Check sed
     if ! command_exists sed; then
-        print_error "sed is required but not found"
-        print_info "Please install sed and try again"
-        exit 1
+        print_warning "sed not found"
+        missing_deps+=("sed")
     else
         print_success "sed found"
     fi
 
     # Check awk
     if ! command_exists awk; then
-        print_error "awk is required but not found"
-        print_info "Please install awk and try again"
-        exit 1
+        print_warning "awk not found"
+        missing_deps+=("awk")
     else
         print_success "awk found"
     fi
-    
-    # Install missing dependencies
+
+    # Exit with helpful message if any dependencies are missing
     if [ ${#missing_deps[@]} -gt 0 ]; then
         echo ""
-        print_warning "Missing dependencies detected: ${missing_deps[*]}"
-        
-        # Check if we can auto-install
-        if [[ "$OS" == "macos" ]] || [[ "$OS" == "ubuntu" ]] || [[ "$OS" == "debian" ]] || [[ "$OS" == "fedora" ]]; then
-            read -p "Would you like to install them automatically? (y/n) " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                for dep in "${missing_deps[@]}"; do
-                    case "$dep" in
-                        jq) install_jq ;;
-                        bc) install_bc ;;
-                    esac
-                done
-            else
-                print_error "Dependencies required. Please install manually and re-run setup"
-                exit 1
-            fi
-        else
-            print_error "Please install missing dependencies and re-run setup"
-            exit 1
-        fi
+        print_error "Missing dependencies: ${missing_deps[*]}"
+        print_install_instructions
+        exit 1
     fi
-    
+
     echo ""
 }
 
