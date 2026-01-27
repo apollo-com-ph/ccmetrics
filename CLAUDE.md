@@ -33,10 +33,10 @@ cd /path/to/project && command    # Change directory first
 7. Cache file deleted after successful read; stale files cleaned up after 30 days
 
 **Script structure:** `setup_ccmetrics.sh` is a self-contained installer with embedded heredocs for:
-- `send_claude_metrics.sh` (lines 365-665) - main hook that reads credentials from `.ccmetrics-config.json`
-- `process_metrics_queue.sh` (lines 676-687) - wrapper that sets `HOOK_EVENT` env var
-- `ccmetrics_statusline.sh` (lines 698-860) - custom statusline showing model, tokens, and context usage
-- `settings.json` (lines 894-925) - Claude Code configuration with hooks and statusline
+- `send_claude_metrics.sh` (lines 365-683) - main hook that reads credentials from `.ccmetrics-config.json`
+- `process_metrics_queue.sh` (lines 694-705) - wrapper that sets `HOOK_EVENT` env var
+- `ccmetrics_statusline.sh` (lines 716-878) - custom statusline showing model, tokens, and context usage
+- `settings.json` (lines 912-943) - Claude Code configuration with hooks and statusline
 
 **Configuration file:** Setup creates `~/.claude/.ccmetrics-config.json` containing:
 - `developer_email` - work email (prompted first during setup)
@@ -44,6 +44,10 @@ cd /path/to/project && command    # Change directory first
 - `supabase_key` - Supabase publishable key (or legacy anon key)
 - File is chmod 600 (only user can read/write)
 - **Re-running setup uses existing values as defaults** (press Enter to keep current values)
+
+**Identity fields:**
+- `developer` - work email entered during setup (manually configured)
+- `claude_account_email` - actual Anthropic account email (fetched automatically from OAuth profile API)
 
 ## Commands
 
@@ -108,13 +112,15 @@ CREATE TABLE sessions (
   context_usage_percent NUMERIC(5,2),
   model TEXT,
   seven_day_utilization INTEGER,
-  seven_day_resets_at TIMESTAMPTZ
+  seven_day_resets_at TIMESTAMPTZ,
+  claude_account_email TEXT
 );
 ```
 
-**To add model column to existing table:**
+**To add new columns to existing table:**
 ```sql
 ALTER TABLE sessions ADD COLUMN model TEXT;
+ALTER TABLE sessions ADD COLUMN claude_account_email TEXT;
 ```
 
 RLS must be disabled or have permissive policy for publishable key to write.

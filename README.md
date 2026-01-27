@@ -26,6 +26,7 @@ bash setup_ccmetrics.sh
 **Collected (metadata only):**
 - Session ID, timestamp
 - Developer work email, hostname
+- Claude account email (Anthropic account identity)
 - Project directory path
 - Duration, cost, token counts
 - Context usage percentage (% of model's context window used)
@@ -73,7 +74,8 @@ CREATE TABLE sessions (
   context_usage_percent NUMERIC(5,2),
   model TEXT,
   seven_day_utilization INTEGER,
-  seven_day_resets_at TIMESTAMPTZ
+  seven_day_resets_at TIMESTAMPTZ,
+  claude_account_email TEXT
 );
 
 CREATE INDEX idx_developer ON sessions(developer);
@@ -128,9 +130,9 @@ Format breakdown:
 - `28%` - Context usage (00-99%)
 - `0012` - Duration (0001-9999 minutes)
 - `$1.2` - Cost ($0.0-$999)
-- `45K` - Input tokens (0.0K-999K)
-- `12K` - Output tokens (0.0K-999K)
-- `57K` - Total tokens (0.0K-999K)
+- `45K` - Input tokens (0-999 or X.XK-999K)
+- `12K` - Output tokens (0-999 or X.XK-999K)
+- `57K` - Total tokens (0-999 or X.XK-999K)
 - `/home/user/projects/myapp` - Project directory
 
 ### Customizing the Statusline
@@ -138,7 +140,7 @@ Format breakdown:
 Edit `~/.claude/hooks/ccmetrics_statusline.sh` to customize the display format. The script receives session data as JSON via stdin and can access:
 
 - **Model**: `.model.display_name` or `.model.id`
-- **Tokens**: `.context_window.total_input_tokens`, `.total_output_tokens`
+- **Tokens**: `.context_window.total_input_tokens`, `.context_window.total_output_tokens`
 - **Context %**: `.context_window.used_percentage`
 - **Cost**: `.cost.total_cost_usd`
 - **Duration**: `.cost.total_duration_ms`

@@ -585,6 +585,7 @@ fi
 
 SEVEN_DAY_UTIL="null"
 SEVEN_DAY_RESETS="null"
+CLAUDE_ACCOUNT_EMAIL=""
 
 CREDENTIALS_FILE="$HOME/.claude/.credentials.json"
 if [ -f "$CREDENTIALS_FILE" ]; then
@@ -603,6 +604,21 @@ if [ -f "$CREDENTIALS_FILE" ]; then
             log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
         else
             log "⚠️  Failed to fetch usage data"
+        fi
+
+        # Fetch Claude account identity
+        PROFILE_RESPONSE=$(curl -s --max-time 5 \
+            "https://api.anthropic.com/api/oauth/profile" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "anthropic-beta: oauth-2025-04-20" \
+            -H "Accept: application/json" 2>/dev/null)
+
+        if [ -n "$PROFILE_RESPONSE" ] && ! echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+            CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
+            log "👤 Claude account: ${CLAUDE_ACCOUNT_EMAIL}"
+        else
+            log "⚠️  Failed to fetch profile data"
         fi
     fi
 fi
@@ -630,6 +646,7 @@ PAYLOAD=$(jq -n \
   --arg model "$MODEL" \
   --argjson seven_day_util "$SEVEN_DAY_UTIL" \
   --arg seven_day_resets "$SEVEN_DAY_RESETS" \
+  --arg claude_account "$CLAUDE_ACCOUNT_EMAIL" \
   '{
     session_id: $session_id,
     developer: $developer,
@@ -645,7 +662,8 @@ PAYLOAD=$(jq -n \
     context_usage_percent: ($context_percent | tonumber),
     model: $model,
     seven_day_utilization: $seven_day_util,
-    seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end)
+    seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end),
+    claude_account_email: (if $claude_account == "" then null else $claude_account end)
   }')
 
 # ============================================================================

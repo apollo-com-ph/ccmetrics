@@ -52,7 +52,8 @@ CREATE TABLE sessions (
   context_usage_percent NUMERIC(5,2),
   model TEXT,
   seven_day_utilization INTEGER,
-  seven_day_resets_at TIMESTAMPTZ
+  seven_day_resets_at TIMESTAMPTZ,
+  claude_account_email TEXT
 );
 
 -- Create indexes for faster queries
@@ -97,10 +98,11 @@ ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
 | model | text | - | Yes | No | No |
 | seven_day_utilization | int4 | - | Yes | No | No |
 | seven_day_resets_at | timestamptz | - | Yes | No | No |
+| claude_account_email | text | - | Yes | No | No |
 
 5. Click **Save**
 
-**Note:** The `developer` field stores the work email address entered during setup.
+**Note:** The `developer` field stores the work email address entered during setup. The `claude_account_email` field stores the actual Anthropic account email (fetched automatically from OAuth).
 
 ## Step 5: Get API Credentials
 
