@@ -33,10 +33,16 @@ cd /path/to/project && command    # Change directory first
 7. Cache file deleted after successful read; stale files cleaned up after 30 days
 
 **Script structure:** `setup_ccmetrics.sh` is a self-contained installer with embedded heredocs for:
-- `send_claude_metrics.sh` (lines 296-562) - main hook with `__SUPABASE_URL__` and `__SUPABASE_KEY__` placeholders
-- `process_metrics_queue.sh` (lines 578-589) - wrapper that sets `HOOK_EVENT` env var
-- `ccmetrics_statusline.sh` (lines 600-762) - custom statusline showing model, tokens, and context usage
-- `settings.json` (lines 796-827) - Claude Code configuration with hooks and statusline
+- `send_claude_metrics.sh` (lines 330-630) - main hook that reads credentials from `.ccmetrics-config.json`
+- `process_metrics_queue.sh` (lines 641-652) - wrapper that sets `HOOK_EVENT` env var
+- `ccmetrics_statusline.sh` (lines 663-825) - custom statusline showing model, tokens, and context usage
+- `settings.json` (lines 859-890) - Claude Code configuration with hooks and statusline
+
+**Configuration file:** Setup creates `~/.claude/.ccmetrics-config.json` containing:
+- `developer_email` - work email collected during setup
+- `supabase_url` - Supabase project URL
+- `supabase_key` - Supabase anon API key
+- File is chmod 600 (only user can read/write)
 
 ## Commands
 
@@ -47,13 +53,18 @@ bash setup_ccmetrics.sh
 
 **Verify installation:**
 ```bash
-tail -f ~/.claude/ccmetrics.log        # Check logs
-ls -1 ~/.claude/metrics_queue/ | wc -l  # Queue size
-ls -l ~/.claude/hooks/                  # Verify hooks
+tail -f ~/.claude/ccmetrics.log           # Check logs
+ls -1 ~/.claude/metrics_queue/ | wc -l    # Queue size
+ls -l ~/.claude/hooks/                    # Verify hooks
+cat ~/.claude/.ccmetrics-config.json      # Check config (contains credentials)
 ```
 
 **Test Supabase connection:**
 ```bash
+# Read credentials from config
+SUPABASE_URL=$(jq -r '.supabase_url' ~/.claude/.ccmetrics-config.json)
+SUPABASE_KEY=$(jq -r '.supabase_key' ~/.claude/.ccmetrics-config.json)
+
 curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
   -H "apikey: ${SUPABASE_KEY}" \
   -H "Authorization: Bearer ${SUPABASE_KEY}"

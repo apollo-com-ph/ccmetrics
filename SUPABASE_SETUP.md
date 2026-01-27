@@ -100,6 +100,8 @@ ALTER TABLE sessions DISABLE ROW LEVEL SECURITY;
 
 5. Click **Save**
 
+**Note:** The `developer` field stores the work email address entered during setup.
+
 ## Step 5: Get API Credentials
 
 1. Go to **Settings** (gear icon) → **API**
@@ -116,7 +118,7 @@ Project URL: https://xxxxxxxxxxxxx.supabase.co
 
 ## Step 6: Test Connection
 
-Test your setup:
+Test your setup (before running the install script):
 ```bash
 # Replace with your values
 SUPABASE_URL="https://xxxxxxxxxxxxx.supabase.co"
@@ -137,7 +139,7 @@ curl -X POST "${SUPABASE_URL}/rest/v1/sessions" \
   -H "Prefer: return=minimal" \
   -d '{
     "session_id": "test-123",
-    "developer": "test_user",
+    "developer": "test@example.com",
     "hostname": "test-host",
     "project_path": "/test",
     "duration_minutes": 1.5,
@@ -150,6 +152,13 @@ curl -X POST "${SUPABASE_URL}/rest/v1/sessions" \
   }'
 
 # Should return: HTTP 201 (success)
+```
+
+After installation, credentials are stored in `~/.claude/.ccmetrics-config.json`:
+```bash
+# Read credentials from config file
+SUPABASE_URL=$(jq -r '.supabase_url' ~/.claude/.ccmetrics-config.json)
+SUPABASE_KEY=$(jq -r '.supabase_key' ~/.claude/.ccmetrics-config.json)
 ```
 
 ## Step 7: Verify Data

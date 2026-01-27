@@ -265,7 +265,18 @@ collect_config() {
             print_error "API key cannot be empty"
         fi
     done
-    
+
+    # ADDITION: Work Email Prompt
+    DEFAULT_EMAIL="${USER}@${HOSTNAME}"
+    echo ""
+    read -p "Enter your work email (default: $DEFAULT_EMAIL): " WORK_EMAIL
+    WORK_EMAIL=${WORK_EMAIL:-$DEFAULT_EMAIL}
+
+    # Basic email validation
+    if [[ ! $WORK_EMAIL =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+        print_warning "Email format may be invalid, but continuing..."
+    fi
+
     echo ""
     print_success "Configuration collected"
 }
@@ -276,13 +287,36 @@ collect_config() {
 
 create_directories() {
     print_step "Creating directories..."
-    
+
     mkdir -p "$CLAUDE_DIR"
     mkdir -p "$HOOKS_DIR"
     mkdir -p "$QUEUE_DIR"
     touch "$LOG_FILE"
-    
+
     print_success "Directories created"
+}
+
+create_config_file() {
+    print_step "Creating configuration file..."
+
+    local config_file="$CLAUDE_DIR/.ccmetrics-config.json"
+
+    # Create config with jq for proper JSON formatting
+    jq -n \
+        --arg email "$WORK_EMAIL" \
+        --arg url "$SUPABASE_URL" \
+        --arg key "$SUPABASE_KEY" \
+        '{
+            developer_email: $email,
+            supabase_url: $url,
+            supabase_key: $key,
+            created_at: (now | todate)
+        }' > "$config_file"
+
+    # Secure the file (only user can read/write)
+    chmod 600 "$config_file"
+
+    print_success "Configuration file created at $config_file"
 }
 
 download_or_create_hook_script() {
@@ -305,8 +339,6 @@ set -euo pipefail
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-SUPABASE_URL="__SUPABASE_URL__"
-SUPABASE_KEY="__SUPABASE_KEY__"
 
 # Queue and cache configuration
 QUEUE_DIR="$HOME/.claude/metrics_queue"
@@ -328,6 +360,39 @@ touch "$LOG_FILE"
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
+
+# ============================================================================
+# READ CONFIGURATION
+# ============================================================================
+
+CONFIG_FILE="\$HOME/.claude/.ccmetrics-config.json"
+
+# Set defaults
+DEVELOPER_EMAIL="\$USER"
+SUPABASE_URL=""
+SUPABASE_KEY=""
+
+if [ -f "\$CONFIG_FILE" ]; then
+    # Read all config values
+    DEVELOPER_EMAIL=\$(jq -r '.developer_email // empty' "\$CONFIG_FILE" 2>/dev/null)
+    SUPABASE_URL=\$(jq -r '.supabase_url // empty' "\$CONFIG_FILE" 2>/dev/null)
+    SUPABASE_KEY=\$(jq -r '.supabase_key // empty' "\$CONFIG_FILE" 2>/dev/null)
+
+    # Validate critical fields
+    if [ -z "\$SUPABASE_URL" ] || [ -z "\$SUPABASE_KEY" ]; then
+        log "❌ ERROR: Missing Supabase credentials in config file"
+        exit 1
+    fi
+
+    # Email can fallback to \$USER if missing
+    if [ -z "\$DEVELOPER_EMAIL" ]; then
+        DEVELOPER_EMAIL="\$USER"
+        log "⚠️  Failed to read email from config, using \\\$USER: \$USER"
+    fi
+else
+    log "❌ ERROR: Config file not found at \$CONFIG_FILE"
+    exit 1
+fi
 
 # Queue a failed payload for retry
 queue_payload() {
@@ -511,9 +576,12 @@ fi
 # CREATE PAYLOAD
 # ============================================================================
 
+# Format cost to 2 decimal places
+TOTAL_COST=$(printf "%.2f" "$TOTAL_COST")
+
 PAYLOAD=$(jq -n \
   --arg session_id "$SESSION_ID" \
-  --arg developer "$USER" \
+  --arg developer "$DEVELOPER_EMAIL" \
   --arg hostname "$HOSTNAME" \
   --arg project "$PROJECT_DIR" \
   --arg duration "$DURATION_MIN" \
@@ -560,12 +628,7 @@ fi
 
 exit 0
 HOOKEOF
-    
-    # Replace placeholders with actual config
-    sed -i.bak "s|__SUPABASE_URL__|${SUPABASE_URL}|g" "$hook_file"
-    sed -i.bak "s|__SUPABASE_KEY__|${SUPABASE_KEY}|g" "$hook_file"
-    rm -f "${hook_file}.bak"
-    
+
     chmod +x "$hook_file"
     print_success "Hook script installed and configured"
 }
@@ -835,11 +898,22 @@ SETTINGSEOF
 
 run_tests() {
     print_step "Running connectivity test..."
-    
+
+    # Read config file
+    local config_file="$CLAUDE_DIR/.ccmetrics-config.json"
+    if [ ! -f "$config_file" ]; then
+        print_error "Config file not found at $config_file"
+        return 1
+    fi
+
+    local TEST_EMAIL=$(jq -r '.developer_email' "$config_file")
+    local TEST_SUPABASE_URL=$(jq -r '.supabase_url' "$config_file")
+    local TEST_SUPABASE_KEY=$(jq -r '.supabase_key' "$config_file")
+
     # Create test payload
     local test_payload=$(jq -n \
         --arg session_id "test-setup-$(date +%s)" \
-        --arg developer "$USER" \
+        --arg developer "$TEST_EMAIL" \
         --arg hostname "$HOSTNAME" \
         '{
             session_id: $session_id,
@@ -855,19 +929,19 @@ run_tests() {
             tools_used: "test",
             context_usage_percent: 0.08
         }')
-    
+
     # Test sending to Supabase
     local response=$(curl -s -w "\n%{http_code}" -X POST \
-        "${SUPABASE_URL}/rest/v1/sessions" \
-        -H "apikey: ${SUPABASE_KEY}" \
-        -H "Authorization: Bearer ${SUPABASE_KEY}" \
+        "${TEST_SUPABASE_URL}/rest/v1/sessions" \
+        -H "apikey: ${TEST_SUPABASE_KEY}" \
+        -H "Authorization: Bearer ${TEST_SUPABASE_KEY}" \
         -H "Content-Type: application/json" \
         -H "Prefer: return=minimal" \
         -d "$test_payload" \
         --max-time 10 2>&1)
-    
+
     local http_code=$(echo "$response" | tail -n1)
-    
+
     if [ "$http_code" = "201" ]; then
         print_success "Successfully connected to Supabase!"
         print_success "Test data sent successfully"
@@ -901,9 +975,10 @@ main() {
     
     # Configuration
     collect_config
-    
+
     # Installation
     create_directories
+    create_config_file
     download_or_create_hook_script
     create_queue_processor
     create_statusline_script

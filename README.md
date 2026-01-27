@@ -25,7 +25,7 @@ bash setup_ccmetrics.sh
 
 **Collected (metadata only):**
 - Session ID, timestamp
-- Developer username, hostname
+- Developer work email, hostname
 - Project directory path
 - Duration, cost, token counts
 - Context usage percentage (% of model's context window used)
@@ -89,7 +89,7 @@ CREATE INDEX idx_created_at ON sessions(created_at);
 curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh | bash
 ```
 
-Enter your Supabase URL and API key when prompted.
+Enter your Supabase URL, API key, and work email when prompted.
 
 ### 3. Verify Installation
 ```bash
@@ -208,9 +208,12 @@ ORDER BY date DESC;
 ```
 ~/.claude/
 ├── settings.json                    # Claude Code configuration
+├── .ccmetrics-config.json           # Credentials (chmod 600)
 ├── ccmetrics.log                    # Sync activity log
 ├── metrics_queue/                   # Retry queue for failed sends
 │   └── [timestamp]_[uuid].json
+├── metrics_cache/                   # Session data cache for SessionEnd
+│   └── [session_id].json
 └── hooks/
     ├── send_claude_metrics.sh       # Main metrics collection hook
     ├── process_metrics_queue.sh     # Queue processor (SessionStart)
@@ -236,7 +239,9 @@ echo '{}' | ~/.claude/hooks/send_claude_metrics.sh
 # Check logs
 tail -20 ~/.claude/ccmetrics.log
 
-# Verify Supabase connection
+# Verify Supabase connection (reads from config file)
+SUPABASE_URL=$(jq -r '.supabase_url' ~/.claude/.ccmetrics-config.json)
+SUPABASE_KEY=$(jq -r '.supabase_key' ~/.claude/.ccmetrics-config.json)
 curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
   -H "apikey: ${SUPABASE_KEY}"
 
