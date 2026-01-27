@@ -160,25 +160,6 @@ install_bc() {
     print_success "bc installed"
 }
 
-install_node() {
-    print_step "Node.js/npm is required but not found"
-    print_warning "Please install Node.js manually:"
-    
-    case "$OS" in
-        macos)
-            print_info "  brew install node"
-            ;;
-        ubuntu|debian)
-            print_info "  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -"
-            print_info "  sudo apt-get install -y nodejs"
-            ;;
-        *)
-            print_info "  Visit: https://nodejs.org"
-            ;;
-    esac
-    
-    exit 1
-}
 
 check_dependencies() {
     print_step "Checking dependencies..."
@@ -209,14 +190,23 @@ check_dependencies() {
     else
         print_success "curl found"
     fi
-    
-    # Check node/npm (for ccusage)
-    if ! command_exists node || ! command_exists npm; then
-        print_warning "Node.js/npm not found (needed for ccusage statusline)"
-        missing_deps+=("node")
+
+    # Check sed
+    if ! command_exists sed; then
+        print_error "sed is required but not found"
+        print_info "Please install sed and try again"
+        exit 1
     else
-        print_success "Node.js found: $(node --version)"
-        print_success "npm found: $(npm --version)"
+        print_success "sed found"
+    fi
+
+    # Check awk
+    if ! command_exists awk; then
+        print_error "awk is required but not found"
+        print_info "Please install awk and try again"
+        exit 1
+    else
+        print_success "awk found"
     fi
     
     # Install missing dependencies
@@ -233,7 +223,6 @@ check_dependencies() {
                     case "$dep" in
                         jq) install_jq ;;
                         bc) install_bc ;;
-                        node) install_node ;;
                     esac
                 done
             else
@@ -576,9 +565,9 @@ HOOKEOF
 
 create_queue_processor() {
     print_step "Installing queue processor..."
-    
+
     local processor_file="$HOOKS_DIR/process_metrics_queue.sh"
-    
+
     cat > "$processor_file" << 'QUEUEEOF'
 #!/bin/bash
 set -euo pipefail
@@ -591,9 +580,172 @@ export HOOK_EVENT="SessionStart"
 
 exit 0
 QUEUEEOF
-    
+
     chmod +x "$processor_file"
     print_success "Queue processor installed"
+}
+
+create_statusline_script() {
+    print_step "Installing custom statusline script..."
+
+    local statusline_file="$HOOKS_DIR/ccmetrics_statusline.sh"
+
+    cat > "$statusline_file" << 'STATUSEOF'
+#!/bin/bash
+set -euo pipefail
+
+#############################################################################
+# Custom Claude Code Statusline - Comprehensive Session Metrics
+# Shows: [Model]%/min/$usd/inK/outK/totK /path
+#############################################################################
+
+# Read session data from stdin
+INPUT=$(cat)
+
+# Extract data using jq
+MODEL=$(echo "$INPUT" | jq -r '.model.display_name // .model.id // "Unknown"')
+INPUT_TOKENS=$(echo "$INPUT" | jq -r '.context_window.total_input_tokens // 0')
+OUTPUT_TOKENS=$(echo "$INPUT" | jq -r '.context_window.total_output_tokens // 0')
+USED_PCT=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0')
+DURATION_MS=$(echo "$INPUT" | jq -r '.cost.total_duration_ms // 0')
+COST_USD=$(echo "$INPUT" | jq -r '.cost.total_cost_usd // 0')
+PROJECT_DIR=$(echo "$INPUT" | jq -r '.workspace.project_dir // ""')
+
+# Calculate total tokens
+TOTAL_TOKENS=$((INPUT_TOKENS + OUTPUT_TOKENS))
+
+# Format model name: 10 chars, right padded with spaces
+format_model() {
+    local model="$1"
+    printf "%-10.10s" "$model"
+}
+
+# Format percentage: 2 chars + "%", left padded with 0, whole numbers
+format_percentage() {
+    local pct="$1"
+    local rounded=$(echo "($pct + 0.5) / 1" | bc)
+    printf "%02d%%" "$rounded"
+}
+
+# Format duration: 4 chars, minutes, left padded with 0
+format_duration() {
+    local ms="$1"
+    local minutes=$(echo "($ms + 30000) / 60000" | bc)
+    printf "%04d" "$minutes"
+}
+
+# Format cost: 4 chars, $0.0 to $999, right padded
+format_cost() {
+    local cost="$1"
+
+    # Handle zero or very small values
+    if [ "$(echo "$cost < 0.05" | bc)" -eq 1 ]; then
+        echo "\$0.0"
+        return
+    fi
+
+    # $0.1-$0.9: "$0.X" (1 decimal)
+    if [ "$(echo "$cost < 1.0" | bc)" -eq 1 ]; then
+        printf "\$0.%.0f" "$(echo "$cost * 10" | bc | sed 's/\..*//')"
+        return
+    fi
+
+    # $1.0-$9.9: "$X.X" (1 decimal)
+    if [ "$(echo "$cost < 10.0" | bc)" -eq 1 ]; then
+        printf "\$%.1f" "$cost"
+        return
+    fi
+
+    # $10-$99: "$XX " (space padded right)
+    if [ "$(echo "$cost < 100.0" | bc)" -eq 1 ]; then
+        printf "\$%2.0f " "$cost"
+        return
+    fi
+
+    # $100-$999: "$XXX"
+    printf "\$%3.0f" "$cost"
+}
+
+# Format tokens: 4 chars, 0.0K to 999K
+format_tokens() {
+    local tokens=$1
+
+    # 0-999: "   X" (right aligned, no K)
+    if [ "$tokens" -lt 1000 ]; then
+        printf "%4d" "$tokens"
+        return
+    fi
+
+    # Convert to K
+    local k_value=$(echo "scale=1; $tokens / 1000" | bc)
+
+    # 1000-9999: "X.XK" (1 decimal)
+    if [ "$tokens" -lt 10000 ]; then
+        printf "%.1fK" "$k_value"
+        return
+    fi
+
+    # 10000-99999: " XXK" (space padded)
+    if [ "$tokens" -lt 100000 ]; then
+        local k_int=$(echo "$tokens / 1000" | bc)
+        printf "%3dK" "$k_int"
+        return
+    fi
+
+    # 100000-999999: "XXXK"
+    local k_int=$(echo "$tokens / 1000" | bc)
+    printf "%3dK" "$k_int"
+}
+
+# Format project directory: truncate from left if too long
+format_project_dir() {
+    local path="$1"
+
+    # Default if missing
+    if [ -z "$path" ]; then
+        echo ""
+        return
+    fi
+
+    # Get terminal width
+    local term_width=$(tput cols 2>/dev/null || echo 80)
+
+    # Fixed width of format: 40 chars
+    local fixed_width=40
+    local path_max=$((term_width - fixed_width - 1))
+
+    # If terminal too narrow, omit path
+    if [ "$path_max" -lt 10 ]; then
+        echo ""
+        return
+    fi
+
+    # Truncate from left if needed
+    if [ ${#path} -gt $path_max ]; then
+        echo "...${path: -$((path_max - 3))}"
+    else
+        echo "$path"
+    fi
+}
+
+# Apply formatting
+MODEL_FMT=$(format_model "$MODEL")
+PCT_FMT=$(format_percentage "$USED_PCT")
+DUR_FMT=$(format_duration "$DURATION_MS")
+COST_FMT=$(format_cost "$COST_USD")
+INPUT_FMT=$(format_tokens $INPUT_TOKENS)
+OUTPUT_FMT=$(format_tokens $OUTPUT_TOKENS)
+TOTAL_FMT=$(format_tokens $TOTAL_TOKENS)
+PROJECT_FMT=$(format_project_dir "$PROJECT_DIR")
+
+# Output statusline: [Model]%/min/$usd/inK/outK/totK /path
+echo "[${MODEL_FMT}]${PCT_FMT}/${DUR_FMT}/${COST_FMT}/${INPUT_FMT}/${OUTPUT_FMT}/${TOTAL_FMT} ${PROJECT_FMT}"
+
+exit 0
+STATUSEOF
+
+    chmod +x "$statusline_file"
+    print_success "Custom statusline script installed"
 }
 
 configure_claude_settings() {
@@ -628,7 +780,7 @@ configure_claude_settings() {
 {
   "statusLine": {
     "type": "command",
-    "command": "npx ccusage statusline"
+    "command": "~/.claude/hooks/ccmetrics_statusline.sh"
   },
   "hooks": {
     "SessionEnd": [
@@ -737,6 +889,7 @@ main() {
     create_directories
     download_or_create_hook_script
     create_queue_processor
+    create_statusline_script
     configure_claude_settings
     
     echo ""

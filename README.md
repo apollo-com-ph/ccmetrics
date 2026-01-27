@@ -47,7 +47,6 @@ bash setup_ccmetrics.sh
   - `jq` - JSON processor
   - `bc` - Calculator
   - `curl` - HTTP client
-  - Node.js/npm - For statusline (optional)
 
 ## Setup
 
@@ -108,6 +107,67 @@ Once installed, metrics are collected automatically:
 - **SessionStart**: Retries any queued failed sends
 - **StatusLine**: Real-time usage display (if configured)
 
+## Statusline Display
+
+The setup script installs a custom statusline that shows comprehensive session metrics in a compact format:
+- Model name (10 chars, padded)
+- Context usage percentage (2 digits)
+- Duration in minutes (4 digits)
+- Cost in USD (4 chars)
+- Token counts: input/output/total (4 chars each)
+- Full project path (truncated if terminal too narrow)
+
+Example output:
+```
+[Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/projects/myapp
+```
+
+Format breakdown:
+- `[Sonnet 4.5]` - Model name (10 chars max)
+- `28%` - Context usage (00-99%)
+- `0012` - Duration (0001-9999 minutes)
+- `$1.2` - Cost ($0.0-$999)
+- `45K` - Input tokens (0.0K-999K)
+- `12K` - Output tokens (0.0K-999K)
+- `57K` - Total tokens (0.0K-999K)
+- `/home/user/projects/myapp` - Project directory
+
+### Customizing the Statusline
+
+Edit `~/.claude/hooks/ccmetrics_statusline.sh` to customize the display format. The script receives session data as JSON via stdin and can access:
+
+- **Model**: `.model.display_name` or `.model.id`
+- **Tokens**: `.context_window.total_input_tokens`, `.total_output_tokens`
+- **Context %**: `.context_window.used_percentage`
+- **Cost**: `.cost.total_cost_usd`
+- **Duration**: `.cost.total_duration_ms`
+- **Project Path**: `.workspace.project_dir`
+
+The script includes formatting functions:
+- `format_model()` - 10 char model name, right padded
+- `format_percentage()` - 2 digit percentage with zero padding
+- `format_duration()` - 4 digit minutes with zero padding
+- `format_cost()` - 4 char cost display ($0.0 to $999)
+- `format_tokens()` - 4 char token display (0.0K to 999K)
+- `format_project_dir()` - Truncates from left if too long
+
+Example customizations:
+
+**Remove project path:**
+```bash
+echo "[${MODEL_FMT}]${PCT_FMT}/${DUR_FMT}/${COST_FMT}/${INPUT_FMT}/${OUTPUT_FMT}/${TOTAL_FMT}"
+```
+
+**Show only percentage and tokens:**
+```bash
+echo "[${MODEL_FMT}]${PCT_FMT}/${TOTAL_FMT}"
+```
+
+**Add custom labels:**
+```bash
+echo "[${MODEL_FMT}] ${PCT_FMT} context | ${DUR_FMT}m | ${COST_FMT} | ${TOTAL_FMT} tokens"
+```
+
 ## Monitoring
 
 ### Check Queue Status
@@ -152,7 +212,8 @@ ORDER BY date DESC;
 │   └── [timestamp]_[uuid].json
 └── hooks/
     ├── send_claude_metrics.sh       # Main metrics collection hook
-    └── process_metrics_queue.sh     # Queue processor (SessionStart)
+    ├── process_metrics_queue.sh     # Queue processor (SessionStart)
+    └── ccmetrics_statusline.sh      # Custom statusline (context usage focus)
 ```
 
 ## Troubleshooting

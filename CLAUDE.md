@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claude Code Metrics Collection - A hook-based system that automatically collects session metadata (cost, duration, tokens) from Claude Code and stores it in a user-controlled Supabase database. Privacy-first design: collects only metadata, never conversation content or code.
 
+## Working Directory Best Practices
+
+Bash tool working directory may reset between commands. Always use absolute paths or explicit `cd` when running commands:
+```bash
+cd /path/to/project && command    # Change directory first
+/path/to/project/script.sh        # Use absolute path
+```
+
 ## Architecture
 
 **Event-driven hook system:**
@@ -22,9 +30,10 @@ Claude Code Metrics Collection - A hook-based system that automatically collects
 6. On failure: queue payload; on success: process up to 10 queued items
 
 **Script structure:** `setup_ccmetrics.sh` is a self-contained installer with embedded heredocs for:
-- `send_claude_metrics.sh` (lines 307-566) - main hook with `__SUPABASE_URL__` and `__SUPABASE_KEY__` placeholders
-- `process_metrics_queue.sh` (lines 582-593) - wrapper that sets `HOOK_EVENT` env var
-- `settings.json` (lines 627-658) - Claude Code configuration with hooks and statusline
+- `send_claude_metrics.sh` (lines 296-555) - main hook with `__SUPABASE_URL__` and `__SUPABASE_KEY__` placeholders
+- `process_metrics_queue.sh` (lines 571-582) - wrapper that sets `HOOK_EVENT` env var
+- `ccmetrics_statusline.sh` (lines 593-745) - custom statusline showing model, tokens, and context usage
+- `settings.json` (lines 779-810) - Claude Code configuration with hooks and statusline
 
 ## Commands
 
@@ -49,10 +58,19 @@ curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
 
 ## Dependencies
 
-Required: `jq`, `bc`, `curl`, `bash`, `sed`
-Optional: `node`/`npm` (for `npx ccusage statusline`)
+Required: `jq`, `bc`, `curl`, `bash`, `sed`, `awk`
 
 Setup script auto-installs jq/bc via apt, yum, brew, or pacman.
+
+## Statusline
+
+Custom bash script (`ccmetrics_statusline.sh`) displays comprehensive session metrics without Node.js dependencies:
+- Format: `[Model]%/min/$usd/inK/outK/totK /path`
+- Example: `[Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/projects/myapp`
+- Reads session JSON from stdin, extracts model/tokens/percentage/cost/duration/path using jq
+- Fixed-width formatting: model (10 chars), percentage (2 digits), duration (4 digits), cost (4 chars), tokens (4 chars each)
+- Project path truncates from left if terminal width insufficient
+- Easily customizable by editing the script
 
 ## Database Schema
 
