@@ -258,8 +258,18 @@ collect_config() {
     
     # Supabase API Key
     while true; do
-        read -p "Enter your Supabase anon/public API key: " SUPABASE_KEY
+        read -p "Enter your Supabase publishable key (starts with sb_publishable_): " SUPABASE_KEY
         if [ -n "$SUPABASE_KEY" ]; then
+            # Validate publishable key format
+            if [[ ! $SUPABASE_KEY =~ ^sb_publishable_ ]]; then
+                print_warning "Key doesn't start with 'sb_publishable_'. Legacy anon keys are deprecated."
+                read -p "Continue anyway? (y/n) " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    print_info "Get your publishable key from: Supabase Dashboard > Project Settings > API"
+                    exit 1
+                fi
+            fi
             break
         else
             print_error "API key cannot be empty"

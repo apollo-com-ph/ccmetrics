@@ -41,7 +41,7 @@ cd /path/to/project && command    # Change directory first
 **Configuration file:** Setup creates `~/.claude/.ccmetrics-config.json` containing:
 - `developer_email` - work email collected during setup
 - `supabase_url` - Supabase project URL
-- `supabase_key` - Supabase anon API key
+- `supabase_key` - Supabase publishable key (or legacy anon key)
 - File is chmod 600 (only user can read/write)
 
 ## Commands
@@ -116,7 +116,7 @@ CREATE TABLE sessions (
 ALTER TABLE sessions ADD COLUMN model TEXT;
 ```
 
-RLS must be disabled or have permissive policy for anon key to write.
+RLS must be disabled or have permissive policy for publishable key to write.
 
 ## Metrics Cache
 
