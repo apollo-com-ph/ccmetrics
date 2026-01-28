@@ -27,6 +27,10 @@ HOOKS_DIR="$CLAUDE_DIR/hooks"
 QUEUE_DIR="$CLAUDE_DIR/metrics_queue"
 LOG_FILE="$CLAUDE_DIR/ccmetrics.log"
 
+# CLI flags
+DRY_RUN=false
+UNINSTALL=false
+
 #############################################################################
 # HELPER FUNCTIONS
 #############################################################################
@@ -57,6 +61,46 @@ print_error() {
 
 print_info() {
     echo -e "${BLUE}ℹ${NC} $1"
+}
+
+# Show usage
+show_usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --dry-run     Show what would be changed without modifying files"
+    echo "  --uninstall   Remove ccmetrics hooks from settings.json"
+    echo "  -h, --help    Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                  # Normal installation"
+    echo "  $0 --dry-run        # Preview changes to settings.json"
+    echo "  $0 --uninstall      # Remove ccmetrics configuration"
+}
+
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --uninstall)
+                UNINSTALL=true
+                shift
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
 }
 
 # Detect OS
@@ -803,35 +847,9 @@ STATUSEOF
     print_success "Custom statusline script installed"
 }
 
-configure_claude_settings() {
-    print_step "Configuring Claude Code settings..."
-    
-    local settings_file="$CLAUDE_DIR/settings.json"
-    local backup_file="$CLAUDE_DIR/settings.json.backup.$(date +%s)"
-    
-    # Backup existing settings
-    if [ -f "$settings_file" ]; then
-        print_info "Backing up existing settings to: $backup_file"
-        cp "$settings_file" "$backup_file"
-        
-        # Merge with existing settings
-        local existing_settings=$(cat "$settings_file")
-        
-        # Check if hooks already exist
-        if echo "$existing_settings" | jq -e '.hooks' >/dev/null 2>&1; then
-            print_warning "Existing hooks configuration found"
-            read -p "Overwrite hooks configuration? (y/n) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                print_warning "Skipping hooks configuration"
-                print_info "You'll need to manually add the hooks to your settings.json"
-                return
-            fi
-        fi
-    fi
-    
-    # Create new settings with hooks
-    cat > "$settings_file" << 'SETTINGSEOF'
+# ccmetrics hook definitions (used for install/uninstall)
+get_ccmetrics_config() {
+    cat << 'EOF'
 {
   "statusLine": {
     "type": "command",
@@ -862,9 +880,210 @@ configure_claude_settings() {
     ]
   }
 }
-SETTINGSEOF
-    
-    print_success "Claude Code settings configured"
+EOF
+}
+
+# Check if ccmetrics hooks are already installed
+has_ccmetrics_hooks() {
+    local settings_file="$1"
+    [ -f "$settings_file" ] || return 1
+
+    # Check for our specific hook commands
+    jq -e '.hooks.SessionEnd[]?.hooks[]? | select(.command | contains("send_claude_metrics"))' "$settings_file" >/dev/null 2>&1 ||
+    jq -e '.hooks.SessionStart[]?.hooks[]? | select(.command | contains("process_metrics_queue"))' "$settings_file" >/dev/null 2>&1 ||
+    jq -e '.statusLine.command | contains("ccmetrics_statusline")' "$settings_file" >/dev/null 2>&1
+}
+
+# Remove ccmetrics hooks from settings, preserving everything else
+remove_ccmetrics_hooks() {
+    local settings_file="$1"
+
+    jq '
+    # Remove ccmetrics from SessionEnd hooks
+    if .hooks.SessionEnd then
+        .hooks.SessionEnd = [.hooks.SessionEnd[] | select(
+            (.hooks // []) | all(.command | contains("send_claude_metrics") | not)
+        )]
+    else . end |
+
+    # Remove ccmetrics from SessionStart hooks
+    if .hooks.SessionStart then
+        .hooks.SessionStart = [.hooks.SessionStart[] | select(
+            (.hooks // []) | all(.command | contains("process_metrics_queue") | not)
+        )]
+    else . end |
+
+    # Clean up empty hook arrays
+    if .hooks.SessionEnd == [] then del(.hooks.SessionEnd) else . end |
+    if .hooks.SessionStart == [] then del(.hooks.SessionStart) else . end |
+    if .hooks == {} then del(.hooks) else . end |
+
+    # Remove ccmetrics statusLine if present
+    if .statusLine.command and (.statusLine.command | contains("ccmetrics_statusline")) then
+        del(.statusLine)
+    else . end
+    ' "$settings_file"
+}
+
+# Merge ccmetrics config into existing settings
+merge_ccmetrics_config() {
+    local settings_file="$1"
+    local ccmetrics_config
+    ccmetrics_config=$(get_ccmetrics_config)
+
+    if [ -f "$settings_file" ]; then
+        # First remove any existing ccmetrics hooks to avoid duplicates
+        local cleaned
+        cleaned=$(remove_ccmetrics_hooks "$settings_file")
+
+        # Deep merge: existing settings + ccmetrics config
+        # For hooks arrays, we append rather than replace
+        echo "$cleaned" | jq --argjson cc "$ccmetrics_config" '
+        # Set statusLine (ccmetrics takes precedence)
+        .statusLine = $cc.statusLine |
+
+        # Initialize hooks if not present
+        .hooks = (.hooks // {}) |
+
+        # Append SessionEnd hooks
+        .hooks.SessionEnd = ((.hooks.SessionEnd // []) + $cc.hooks.SessionEnd) |
+
+        # Append SessionStart hooks
+        .hooks.SessionStart = ((.hooks.SessionStart // []) + $cc.hooks.SessionStart)
+        '
+    else
+        # No existing settings, use ccmetrics config as-is
+        echo "$ccmetrics_config"
+    fi
+}
+
+# Show diff between current and proposed settings
+show_settings_diff() {
+    local settings_file="$1"
+    local new_settings="$2"
+
+    if [ -f "$settings_file" ]; then
+        print_info "Changes to $settings_file:"
+        echo ""
+        # Use diff, show context
+        diff -u "$settings_file" <(echo "$new_settings") || true
+        echo ""
+    else
+        print_info "New file will be created: $settings_file"
+        echo ""
+        echo "$new_settings" | jq .
+        echo ""
+    fi
+}
+
+configure_claude_settings() {
+    print_step "Configuring Claude Code settings..."
+
+    local settings_file="$CLAUDE_DIR/settings.json"
+    local backup_file="$CLAUDE_DIR/settings.json.backup.$(date +%s)"
+
+    # Check if already installed
+    if has_ccmetrics_hooks "$settings_file"; then
+        print_warning "ccmetrics hooks are already installed"
+        if [ "$DRY_RUN" = true ]; then
+            print_info "No changes needed (already installed)"
+            return 0
+        fi
+        read -p "Reinstall/update hooks? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_info "Keeping existing configuration"
+            return 0
+        fi
+    fi
+
+    # Generate merged configuration
+    local new_settings
+    new_settings=$(merge_ccmetrics_config "$settings_file")
+
+    # Validate JSON before proceeding
+    if ! echo "$new_settings" | jq empty 2>/dev/null; then
+        print_error "Failed to generate valid JSON configuration"
+        print_error "This is a bug - please report it"
+        return 1
+    fi
+
+    # Dry run: show diff and exit
+    if [ "$DRY_RUN" = true ]; then
+        print_info "[DRY RUN] Would make the following changes:"
+        show_settings_diff "$settings_file" "$new_settings"
+        print_info "[DRY RUN] No files were modified"
+        return 0
+    fi
+
+    # Backup existing settings
+    if [ -f "$settings_file" ]; then
+        print_info "Backing up existing settings to: $backup_file"
+        cp "$settings_file" "$backup_file"
+
+        # Show what other keys exist that we're preserving
+        local preserved_keys
+        preserved_keys=$(jq -r 'keys | map(select(. != "hooks" and . != "statusLine")) | join(", ")' "$settings_file" 2>/dev/null)
+        if [ -n "$preserved_keys" ]; then
+            print_info "Preserving existing settings: $preserved_keys"
+        fi
+    fi
+
+    # Write the merged configuration
+    echo "$new_settings" | jq . > "$settings_file"
+
+    print_success "Claude Code settings configured (merged with existing)"
+}
+
+# Uninstall ccmetrics from settings.json
+uninstall_ccmetrics_settings() {
+    print_step "Removing ccmetrics from Claude Code settings..."
+
+    local settings_file="$CLAUDE_DIR/settings.json"
+    local backup_file="$CLAUDE_DIR/settings.json.backup.$(date +%s)"
+
+    if [ ! -f "$settings_file" ]; then
+        print_info "No settings.json found, nothing to uninstall"
+        return 0
+    fi
+
+    if ! has_ccmetrics_hooks "$settings_file"; then
+        print_info "ccmetrics hooks not found in settings.json"
+        return 0
+    fi
+
+    # Generate cleaned configuration
+    local cleaned_settings
+    cleaned_settings=$(remove_ccmetrics_hooks "$settings_file")
+
+    # Validate JSON
+    if ! echo "$cleaned_settings" | jq empty 2>/dev/null; then
+        print_error "Failed to generate valid JSON configuration"
+        return 1
+    fi
+
+    # Dry run: show diff and exit
+    if [ "$DRY_RUN" = true ]; then
+        print_info "[DRY RUN] Would make the following changes:"
+        show_settings_diff "$settings_file" "$cleaned_settings"
+        print_info "[DRY RUN] No files were modified"
+        return 0
+    fi
+
+    # Backup before modifying
+    print_info "Backing up settings to: $backup_file"
+    cp "$settings_file" "$backup_file"
+
+    # Check if settings would be empty after removal
+    if echo "$cleaned_settings" | jq -e '. == {}' >/dev/null 2>&1; then
+        print_info "Settings file would be empty, removing it"
+        rm "$settings_file"
+    else
+        echo "$cleaned_settings" | jq . > "$settings_file"
+    fi
+
+    print_success "ccmetrics hooks removed from settings.json"
+    print_info "Backup saved to: $backup_file"
 }
 
 #############################################################################
@@ -938,16 +1157,43 @@ run_tests() {
 
 main() {
     print_header
-    
+
+    # Handle uninstall mode
+    if [ "$UNINSTALL" = true ]; then
+        print_info "Uninstall mode"
+        if [ "$DRY_RUN" = true ]; then
+            print_info "[DRY RUN] No files will be modified"
+        fi
+        echo ""
+        check_dependencies
+        uninstall_ccmetrics_settings
+        if [ "$DRY_RUN" != true ]; then
+            echo ""
+            print_success "Uninstallation complete"
+            print_info "Note: Hook scripts in ~/.claude/hooks/ were not removed"
+            print_info "To fully remove, delete: ~/.claude/hooks/ccmetrics_*.sh"
+        fi
+        return 0
+    fi
+
+    # Handle dry-run mode for install
+    if [ "$DRY_RUN" = true ]; then
+        print_info "[DRY RUN] Previewing settings.json changes only"
+        echo ""
+        check_dependencies
+        configure_claude_settings
+        return 0
+    fi
+
     # Checks
     check_not_root
     detect_os
     print_info "Detected OS: $OS"
     echo ""
-    
+
     # Dependencies
     check_dependencies
-    
+
     # Configuration
     collect_config
 
@@ -958,9 +1204,9 @@ main() {
     create_queue_processor
     create_statusline_script
     configure_claude_settings
-    
+
     echo ""
-    
+
     # Testing
     if run_tests; then
         echo ""
@@ -974,7 +1220,7 @@ main() {
         echo "  4. Check logs: tail -f ~/.claude/ccmetrics.log"
         echo "  5. View queue: ls ~/.claude/metrics_queue/"
         echo ""
-        print_info "Documentation:"        
+        print_info "Documentation:"
         echo "  - Logs: ~/.claude/ccmetrics.log"
         echo "  - Settings: ~/.claude/settings.json"
         echo ""
@@ -987,5 +1233,6 @@ main() {
     fi
 }
 
-# Run main installation
+# Parse arguments and run
+parse_args "$@"
 main

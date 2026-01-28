@@ -104,6 +104,25 @@ curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_
 
 Enter your Supabase URL, API key, and work email when prompted.
 
+#### Setup Options
+
+```bash
+# Preview changes without modifying files
+bash setup_ccmetrics.sh --dry-run
+
+# Uninstall ccmetrics hooks (preserves other settings)
+bash setup_ccmetrics.sh --uninstall
+
+# Preview uninstall changes
+bash setup_ccmetrics.sh --uninstall --dry-run
+```
+
+The setup script safely merges with existing `settings.json`:
+- Preserves all existing configuration keys
+- Appends hooks without overwriting other hooks
+- Creates timestamped backups before any modification
+- Validates JSON before writing
+
 ### 3. Verify Installation
 ```bash
 # Check logs
@@ -270,12 +289,16 @@ ls ~/.claude/metrics_queue/
 
 ### Disable monitoring
 ```bash
-# Remove hooks from settings
-# Edit ~/.claude/settings.json and remove "hooks" section
+# Uninstall ccmetrics hooks (preserves other settings)
+bash setup_ccmetrics.sh --uninstall
 
-# Or delete hook scripts
+# Preview what would be removed
+bash setup_ccmetrics.sh --uninstall --dry-run
+
+# Or manually delete hook scripts
 rm ~/.claude/hooks/send_claude_metrics.sh
 rm ~/.claude/hooks/process_metrics_queue.sh
+rm ~/.claude/hooks/ccmetrics_statusline.sh
 ```
 
 ## Privacy & Compliance
