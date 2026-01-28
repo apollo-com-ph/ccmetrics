@@ -504,6 +504,9 @@ if [ -f "$CACHE_FILE" ]; then
     OUTPUT_TOKENS=$(echo "$CACHED_DATA" | jq -r '.context_window.total_output_tokens // 0')
     CONTEXT_PERCENT=$(echo "$CACHED_DATA" | jq -r '.context_window.used_percentage // 0')
 
+    # Log raw cache values for debugging duration discrepancies
+    log "📊 Cache values: duration_ms=$DURATION_MS, cost=$TOTAL_COST, input=$INPUT_TOKENS, output=$OUTPUT_TOKENS"
+
     # Clean up cache file after reading
     rm -f "$CACHE_FILE"
 else
@@ -516,8 +519,13 @@ else
     CONTEXT_PERCENT=0
 fi
 
-# Calculate duration in minutes
+# Calculate duration in minutes (same formula as payload)
 DURATION_MIN=$(awk "BEGIN {printf \"%.2f\", $DURATION_MS / 60000}" 2>/dev/null || echo "0")
+
+# Calculate what statusline would display (for debugging discrepancies)
+# Statusline uses: ($ms + 30000) / 60000, rounded
+STATUSLINE_WOULD_SHOW=$(awk "BEGIN {printf \"%.0f\", ($DURATION_MS + 30000) / 60000}" 2>/dev/null || echo "0")
+log "📊 Duration: ${DURATION_MIN}min (statusline would show: ${STATUSLINE_WOULD_SHOW}min)"
 
 # ============================================================================
 # COUNT MESSAGES AND TOOLS FROM TRANSCRIPT
