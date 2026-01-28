@@ -1,0 +1,25 @@
+# Credentials and config (stored in ~/.claude/, not repo)
+.ccmetrics-config.json
+
+# Logs
+*.log
+ccmetrics.log
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+# Test artifacts
+test_output/
