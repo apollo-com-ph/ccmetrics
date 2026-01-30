@@ -559,34 +559,52 @@ CREDENTIALS_FILE="$HOME/.claude/.credentials.json"
 if [ -f "$CREDENTIALS_FILE" ]; then
     ACCESS_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
     if [ -n "$ACCESS_TOKEN" ]; then
-        USAGE_RESPONSE=$(curl -s --max-time 5 \
+        USAGE_RAW=$(curl -s --max-time 5 -w "\n%{http_code}" \
             "https://api.anthropic.com/api/oauth/usage" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -H "anthropic-beta: oauth-2025-04-20" \
             -H "Accept: application/json" 2>/dev/null)
+        USAGE_HTTP_CODE=$(echo "$USAGE_RAW" | tail -1)
+        USAGE_RESPONSE=$(echo "$USAGE_RAW" | sed '$d')
 
         if [ -n "$USAGE_RESPONSE" ] && ! echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
             SEVEN_DAY_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.utilization // "null"')
             SEVEN_DAY_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.resets_at // "null"')
             log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
         else
-            log "⚠️  Failed to fetch usage data"
+            if [ -z "$USAGE_RESPONSE" ]; then
+                log "⚠️  Failed to fetch usage data: empty response (network error or timeout)"
+            elif echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+                USAGE_ERR=$(echo "$USAGE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
+                log "⚠️  Failed to fetch usage data: $USAGE_ERR (HTTP $USAGE_HTTP_CODE)"
+            else
+                log "⚠️  Failed to fetch usage data: HTTP $USAGE_HTTP_CODE"
+            fi
         fi
 
         # Fetch Claude account identity
-        PROFILE_RESPONSE=$(curl -s --max-time 5 \
+        PROFILE_RAW=$(curl -s --max-time 5 -w "\n%{http_code}" \
             "https://api.anthropic.com/api/oauth/profile" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -H "anthropic-beta: oauth-2025-04-20" \
             -H "Accept: application/json" 2>/dev/null)
+        PROFILE_HTTP_CODE=$(echo "$PROFILE_RAW" | tail -1)
+        PROFILE_RESPONSE=$(echo "$PROFILE_RAW" | sed '$d')
 
         if [ -n "$PROFILE_RESPONSE" ] && ! echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
             CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
             log "👤 Claude account: ${CLAUDE_ACCOUNT_EMAIL}"
         else
-            log "⚠️  Failed to fetch profile data"
+            if [ -z "$PROFILE_RESPONSE" ]; then
+                log "⚠️  Failed to fetch profile data: empty response (network error or timeout)"
+            elif echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+                PROFILE_ERR=$(echo "$PROFILE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
+                log "⚠️  Failed to fetch profile data: $PROFILE_ERR (HTTP $PROFILE_HTTP_CODE)"
+            else
+                log "⚠️  Failed to fetch profile data: HTTP $PROFILE_HTTP_CODE"
+            fi
         fi
     fi
 fi
