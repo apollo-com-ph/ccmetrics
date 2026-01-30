@@ -574,35 +574,65 @@ PROJECT_DIR=$(echo "$SESSION_DATA" | jq -r '.cwd // "unknown"')
 TRANSCRIPT_PATH=$(echo "$SESSION_DATA" | jq -r '.transcript_path // ""')
 
 # ============================================================================
+# EXTRACTION HELPER WITH FALLBACK
+# ============================================================================
+
+# Extract metrics from JSON with error handling and defaults
+# Args: json_data, field_path, default_value
+extract_metric() {
+    local data="$1"
+    local field="$2"
+    local default="${3:-}"
+
+    echo "$data" | jq -r "$field // empty" 2>/dev/null || echo "$default"
+}
+
+# ============================================================================
 # READ CACHED METRICS FROM STATUSLINE HOOK
 # ============================================================================
 
 CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}.json"
+METRICS_SOURCE="none"
 
+# Try cache first
 if [ -f "$CACHE_FILE" ]; then
     log "📂 Reading cached metrics for session $SESSION_ID"
     CACHED_DATA=$(cat "$CACHE_FILE")
-    debug_log "cache context_window: $(echo "$CACHED_DATA" | jq -c '.context_window // {}' 2>/dev/null)"
 
-    # Extract pre-calculated values from cache (set by statusline hook)
-    MODEL=$(echo "$CACHED_DATA" | jq -r '.model.display_name // .model.id // "unknown"')
-    TOTAL_COST=$(echo "$CACHED_DATA" | jq -r '.cost.total_cost_usd // 0')
-    DURATION_MS=$(echo "$CACHED_DATA" | jq -r '.cost.total_duration_ms // 0')
-    INPUT_TOKENS=$(echo "$CACHED_DATA" | jq -r '.context_window.total_input_tokens // 0')
-    OUTPUT_TOKENS=$(echo "$CACHED_DATA" | jq -r '.context_window.total_output_tokens // 0')
-    CONTEXT_PERCENT=$(echo "$CACHED_DATA" | jq -r '.context_window.used_percentage // 0')
-    debug_log "extracted: model=$MODEL cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS context_pct=$CONTEXT_PERCENT"
+    # Validate cache structure before using (check non-empty and has .model field)
+    if [ -n "$CACHED_DATA" ] && echo "$CACHED_DATA" | jq -e '.model | select(. != null)' >/dev/null 2>&1; then
+        METRICS_SOURCE="cache"
+        debug_log "cache valid, context_window: $(echo "$CACHED_DATA" | jq -c '.context_window // {}' 2>/dev/null)"
+
+        # Extract pre-calculated values from cache (set by statusline hook)
+        MODEL=$(extract_metric "$CACHED_DATA" '.model.display_name // .model.id' 'unknown')
+        TOTAL_COST=$(extract_metric "$CACHED_DATA" '.cost.total_cost_usd' '0')
+        DURATION_MS=$(extract_metric "$CACHED_DATA" '.cost.total_duration_ms' '0')
+        INPUT_TOKENS=$(extract_metric "$CACHED_DATA" '.context_window.total_input_tokens' '0')
+        OUTPUT_TOKENS=$(extract_metric "$CACHED_DATA" '.context_window.total_output_tokens' '0')
+        CONTEXT_PERCENT=$(extract_metric "$CACHED_DATA" '.context_window.used_percentage' '0')
+        debug_log "extracted from cache: model=$MODEL cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS context_pct=$CONTEXT_PERCENT"
+    else
+        log "⚠️  Cache file invalid/empty for session $SESSION_ID, trying stdin fallback"
+        CACHED_DATA=""
+    fi
 
     # Clean up cache file after reading
     rm -f "$CACHE_FILE"
-else
-    log "⚠️  No cache file found for session $SESSION_ID, using defaults"
-    MODEL="unknown"
-    TOTAL_COST=0
-    DURATION_MS=0
-    INPUT_TOKENS=0
-    OUTPUT_TOKENS=0
-    CONTEXT_PERCENT=0
+fi
+
+# Fallback to stdin if cache failed or didn't exist
+if [ "$METRICS_SOURCE" = "none" ]; then
+    log "📂 Extracting metrics from stdin (cache unavailable)"
+    METRICS_SOURCE="stdin"
+
+    MODEL=$(extract_metric "$SESSION_DATA" '.model.display_name // .model.id' 'unknown')
+    TOTAL_COST=$(extract_metric "$SESSION_DATA" '.cost.total_cost_usd' '0')
+    DURATION_MS=$(extract_metric "$SESSION_DATA" '.cost.total_duration_ms' '0')
+    INPUT_TOKENS=$(extract_metric "$SESSION_DATA" '.context_window.total_input_tokens' '0')
+    OUTPUT_TOKENS=$(extract_metric "$SESSION_DATA" '.context_window.total_output_tokens' '0')
+    CONTEXT_PERCENT=$(extract_metric "$SESSION_DATA" '.context_window.used_percentage' '0')
+    debug_log "extracted from stdin: model=$MODEL cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS context_pct=$CONTEXT_PERCENT"
 fi
 
 # Calculate duration in minutes
@@ -727,6 +757,24 @@ fi
 # CREATE PAYLOAD
 # ============================================================================
 
+# Defense-in-depth: apply defaults to prevent crashes from empty strings
+MODEL="${MODEL:-unknown}"
+TOTAL_COST="${TOTAL_COST:-0}"
+DURATION_MS="${DURATION_MS:-0}"
+INPUT_TOKENS="${INPUT_TOKENS:-0}"
+OUTPUT_TOKENS="${OUTPUT_TOKENS:-0}"
+CONTEXT_PERCENT="${CONTEXT_PERCENT:-0}"
+MSG_COUNT="${MSG_COUNT:-0}"
+USER_MSG_COUNT="${USER_MSG_COUNT:-0}"
+TOOLS="${TOOLS:-}"
+SEVEN_DAY_UTIL="${SEVEN_DAY_UTIL:-null}"
+SEVEN_DAY_RESETS="${SEVEN_DAY_RESETS:-null}"
+FIVE_HOUR_UTIL="${FIVE_HOUR_UTIL:-null}"
+FIVE_HOUR_RESETS="${FIVE_HOUR_RESETS:-null}"
+SEVEN_DAY_SONNET_UTIL="${SEVEN_DAY_SONNET_UTIL:-null}"
+SEVEN_DAY_SONNET_RESETS="${SEVEN_DAY_SONNET_RESETS:-null}"
+CLAUDE_ACCOUNT_EMAIL="${CLAUDE_ACCOUNT_EMAIL:-}"
+
 # Format cost to 2 decimal places
 TOTAL_COST=$(printf "%.2f" "$TOTAL_COST")
 
@@ -782,7 +830,10 @@ debug_log "payload context_usage_percent=$(echo "$PAYLOAD" | jq -r '.context_usa
 # Skip if no meaningful metrics (no tokens, no cost, unknown model)
 if [[ "$INPUT_TOKENS" -eq 0 && "$OUTPUT_TOKENS" -eq 0 && "$MODEL" == "unknown" ]]; then
     if [ "$(awk "BEGIN {print ($TOTAL_COST == 0) ? 1 : 0}")" -eq 1 ]; then
-        log "⏭️  Skipping empty payload - no meaningful metrics (0 tokens, \$0 cost, unknown model)"
+        log "⏭️  Skipping empty payload for session $SESSION_ID (source: $METRICS_SOURCE) - no meaningful metrics (0 tokens, \$0 cost, unknown model)"
+        # Clean up OAuth cache if it exists
+        OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}_oauth.json"
+        rm -f "$OAUTH_CACHE_FILE"
         exit 0
     fi
 fi
@@ -876,16 +927,23 @@ if [ -n "$SESSION_ID" ]; then
         debug_log "old_pct=$OLD_PCT"
 
         # Only apply high-watermark when incoming is zero; non-zero values always overwrite
+        CACHE_TMP="${CACHE_FILE}.tmp.$$"
         if [ "$(awk "BEGIN {print ($INCOMING_PCT == 0) ? 1 : 0}")" -eq 1 ]; then
             debug_log "HIGH-WATERMARK: incoming is 0, keeping old=$OLD_PCT"
-            echo "$INPUT" | jq --argjson old_pct "$OLD_PCT" '.context_window.used_percentage = $old_pct' > "$CACHE_FILE"
+            echo "$INPUT" | jq --argjson old_pct "$OLD_PCT" '.context_window.used_percentage = $old_pct' > "$CACHE_TMP"
+            if [ -s "$CACHE_TMP" ]; then
+                mv -f "$CACHE_TMP" "$CACHE_FILE"
+            else
+                rm -f "$CACHE_TMP"
+            fi
         else
             debug_log "writing incoming=$INCOMING_PCT (non-zero, overwriting old=$OLD_PCT)"
-            echo "$INPUT" > "$CACHE_FILE"
+            echo "$INPUT" > "$CACHE_TMP" && mv -f "$CACHE_TMP" "$CACHE_FILE"
         fi
     else
         debug_log "no existing cache, writing incoming=$INCOMING_PCT"
-        echo "$INPUT" > "$CACHE_FILE"
+        CACHE_TMP="${CACHE_FILE}.tmp.$$"
+        echo "$INPUT" > "$CACHE_TMP" && mv -f "$CACHE_TMP" "$CACHE_FILE"
     fi
 fi
 
@@ -973,7 +1031,8 @@ fi
         CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
     fi
 
-    # Write cache
+    # Write cache atomically
+    OAUTH_CACHE_TMP="${OAUTH_CACHE_FILE}.tmp.$$"
     jq -n \
         --argjson fetched_at "$CURRENT_TIME" \
         --argjson seven_day_util "$SEVEN_DAY_UTIL" \
@@ -992,7 +1051,12 @@ fi
             seven_day_sonnet_utilization: $seven_day_sonnet_util,
             seven_day_sonnet_resets_at: (if $seven_day_sonnet_resets == "null" then null else $seven_day_sonnet_resets end),
             claude_account_email: (if $claude_account == "" then null else $claude_account end)
-        }' > "$OAUTH_CACHE_FILE" 2>/dev/null
+        }' > "$OAUTH_CACHE_TMP" 2>/dev/null
+    if [ -s "$OAUTH_CACHE_TMP" ]; then
+        mv -f "$OAUTH_CACHE_TMP" "$OAUTH_CACHE_FILE"
+    else
+        rm -f "$OAUTH_CACHE_TMP"
+    fi
 ) &
 
 # Extract data using jq
