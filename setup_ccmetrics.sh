@@ -571,6 +571,7 @@ if [ -f "$CREDENTIALS_FILE" ]; then
         if [ -n "$USAGE_RESPONSE" ] && ! echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
             SEVEN_DAY_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.utilization // "null"')
             SEVEN_DAY_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.resets_at // "null"')
+            debug_log "Full usage API response: $USAGE_RESPONSE"
             log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
         else
             if [ -z "$USAGE_RESPONSE" ]; then
@@ -1058,19 +1059,9 @@ configure_claude_settings() {
     local settings_file="$CLAUDE_DIR/settings.json"
     local backup_file="$CLAUDE_DIR/settings.json.backup.$(date +%s)"
 
-    # Check if already installed
+    # Inform if already installed (merge is safe, always proceed)
     if has_ccmetrics_hooks "$settings_file"; then
-        print_warning "ccmetrics hooks are already installed"
-        if [ "$DRY_RUN" = true ]; then
-            print_info "No changes needed (already installed)"
-            return 0
-        fi
-        read -p "Reinstall/update hooks? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "Keeping existing configuration"
-            return 0
-        fi
+        print_info "ccmetrics hooks already installed, updating..."
     fi
 
     # Generate merged configuration
@@ -1283,8 +1274,35 @@ main() {
 
     echo ""
 
-    # Testing
-    if run_tests; then
+    # Testing (only when debug is enabled)
+    local config_file="$CLAUDE_DIR/.ccmetrics-config.json"
+    local debug_enabled=$(jq -r '.debug // false' "$config_file" 2>/dev/null || echo "false")
+
+    if [ "$debug_enabled" = "true" ]; then
+        if run_tests; then
+            echo ""
+            print_header
+            echo -e "${GREEN}✓ Installation Complete!${NC}"
+            echo ""
+            print_info "Next steps:"
+            echo "  1. Start a new Claude Code session"
+            echo "  2. The statusline will show real-time usage"
+            echo "  3. Session data will be sent to Supabase automatically"
+            echo "  4. Check logs: tail -f ~/.claude/ccmetrics.log"
+            echo "  5. View queue: ls ~/.claude/metrics_queue/"
+            echo ""
+            print_info "Documentation:"
+            echo "  - Logs: ~/.claude/ccmetrics.log"
+            echo "  - Settings: ~/.claude/settings.json"
+            echo ""
+        else
+            echo ""
+            print_error "Installation completed but connectivity test failed"
+            print_info "Please check the configuration and try again"
+            print_info "You can re-run setup with: bash setup_ccmetrics.sh"
+            exit 1
+        fi
+    else
         echo ""
         print_header
         echo -e "${GREEN}✓ Installation Complete!${NC}"
@@ -1300,12 +1318,6 @@ main() {
         echo "  - Logs: ~/.claude/ccmetrics.log"
         echo "  - Settings: ~/.claude/settings.json"
         echo ""
-    else
-        echo ""
-        print_error "Installation completed but connectivity test failed"
-        print_info "Please check the configuration and try again"
-        print_info "You can re-run setup with: bash setup_ccmetrics.sh"
-        exit 1
     fi
 }
 
