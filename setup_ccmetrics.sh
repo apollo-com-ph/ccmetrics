@@ -300,7 +300,8 @@ create_config_file() {
             developer_email: $email,
             supabase_url: $url,
             supabase_key: $key,
-            created_at: (now | todate)
+            created_at: (now | todate),
+            debug: false
         }' > "$config_file"
 
     # Secure the file (only user can read/write)
@@ -367,6 +368,7 @@ if [ -f "$CONFIG_FILE" ]; then
     DEVELOPER_EMAIL=$(jq -r '.developer_email // empty' "$CONFIG_FILE" 2>/dev/null)
     SUPABASE_URL=$(jq -r '.supabase_url // empty' "$CONFIG_FILE" 2>/dev/null)
     SUPABASE_KEY=$(jq -r '.supabase_key // empty' "$CONFIG_FILE" 2>/dev/null)
+    DEBUG_ENABLED=$(jq -r '.debug // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
 
     # Validate critical fields
     if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
@@ -383,6 +385,14 @@ else
     log "❌ ERROR: Config file not found at $CONFIG_FILE"
     exit 1
 fi
+
+# Debug logging support
+DEBUG_LOG="$HOME/.claude/ccmetrics_debug.log"
+debug_log() {
+    if [ "$DEBUG_ENABLED" = "true" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SESSION_END] $1" >> "$DEBUG_LOG"
+    fi
+}
 
 # Queue a failed payload for retry
 queue_payload() {
@@ -471,6 +481,7 @@ fi
 
 # Extract session data from stdin
 SESSION_DATA=$(cat)
+debug_log "raw stdin: $SESSION_DATA"
 
 # Validate we have session data
 if [ -z "$SESSION_DATA" ] || [ "$SESSION_DATA" = "{}" ]; then
@@ -495,6 +506,7 @@ CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}.json"
 if [ -f "$CACHE_FILE" ]; then
     log "📂 Reading cached metrics for session $SESSION_ID"
     CACHED_DATA=$(cat "$CACHE_FILE")
+    debug_log "cache context_window: $(echo "$CACHED_DATA" | jq -c '.context_window // {}' 2>/dev/null)"
 
     # Extract pre-calculated values from cache (set by statusline hook)
     MODEL=$(echo "$CACHED_DATA" | jq -r '.model.display_name // .model.id // "unknown"')
@@ -503,6 +515,7 @@ if [ -f "$CACHE_FILE" ]; then
     INPUT_TOKENS=$(echo "$CACHED_DATA" | jq -r '.context_window.total_input_tokens // 0')
     OUTPUT_TOKENS=$(echo "$CACHED_DATA" | jq -r '.context_window.total_output_tokens // 0')
     CONTEXT_PERCENT=$(echo "$CACHED_DATA" | jq -r '.context_window.used_percentage // 0')
+    debug_log "extracted: model=$MODEL cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS context_pct=$CONTEXT_PERCENT"
 
     # Clean up cache file after reading
     rm -f "$CACHE_FILE"
@@ -620,6 +633,7 @@ PAYLOAD=$(jq -n \
     seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end),
     claude_account_email: (if $claude_account == "" then null else $claude_account end)
   }')
+debug_log "payload context_usage_percent=$(echo "$PAYLOAD" | jq -r '.context_usage_percent' 2>/dev/null)"
 
 # ============================================================================
 # SKIP EMPTY PAYLOADS
@@ -696,10 +710,43 @@ mkdir -p "$METRICS_CACHE_DIR"
 # Read session data from stdin
 INPUT=$(cat)
 
-# Cache session data for SessionEnd hook to read
+# Debug mode support
+DEBUG_ENABLED=false
+CONFIG_FILE="$HOME/.claude/.ccmetrics-config.json"
+if [ -f "$CONFIG_FILE" ]; then
+    DEBUG_ENABLED=$(jq -r '.debug // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
+fi
+DEBUG_LOG="$HOME/.claude/ccmetrics_debug.log"
+debug_log() {
+    if [ "$DEBUG_ENABLED" = "true" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STATUSLINE] $1" >> "$DEBUG_LOG"
+    fi
+}
+debug_log "raw stdin: $INPUT"
+
+# Cache session data for SessionEnd hook to read (high-watermark for used_percentage)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 if [ -n "$SESSION_ID" ]; then
-    echo "$INPUT" > "${METRICS_CACHE_DIR}/${SESSION_ID}.json"
+    CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}.json"
+    INCOMING_PCT=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0')
+    debug_log "session=$SESSION_ID incoming_pct=$INCOMING_PCT"
+
+    if [ -f "$CACHE_FILE" ]; then
+        OLD_PCT=$(jq -r '.context_window.used_percentage // 0' "$CACHE_FILE" 2>/dev/null || echo "0")
+        debug_log "old_pct=$OLD_PCT"
+
+        # Only apply high-watermark when incoming is zero; non-zero values always overwrite
+        if [ "$(awk "BEGIN {print ($INCOMING_PCT == 0) ? 1 : 0}")" -eq 1 ]; then
+            debug_log "HIGH-WATERMARK: incoming is 0, keeping old=$OLD_PCT"
+            echo "$INPUT" | jq --argjson old_pct "$OLD_PCT" '.context_window.used_percentage = $old_pct' > "$CACHE_FILE"
+        else
+            debug_log "writing incoming=$INCOMING_PCT (non-zero, overwriting old=$OLD_PCT)"
+            echo "$INPUT" > "$CACHE_FILE"
+        fi
+    else
+        debug_log "no existing cache, writing incoming=$INCOMING_PCT"
+        echo "$INPUT" > "$CACHE_FILE"
+    fi
 fi
 
 # Extract data using jq
@@ -851,6 +898,10 @@ STATUSEOF
 get_ccmetrics_config() {
     cat << 'EOF'
 {
+  "model": "opusplan",
+  "permissions": {
+    "defaultMode": "plan"
+  },
   "statusLine": {
     "type": "command",
     "command": "~/.claude/hooks/ccmetrics_statusline.sh"
@@ -939,6 +990,13 @@ merge_ccmetrics_config() {
         # Deep merge: existing settings + ccmetrics config
         # For hooks arrays, we append rather than replace
         echo "$cleaned" | jq --argjson cc "$ccmetrics_config" '
+        # Set model
+        .model = $cc.model |
+
+        # Set permissions.defaultMode (preserves existing allow/deny)
+        .permissions = (.permissions // {}) |
+        .permissions.defaultMode = $cc.permissions.defaultMode |
+
         # Set statusLine (ccmetrics takes precedence)
         .statusLine = $cc.statusLine |
 
@@ -1023,7 +1081,7 @@ configure_claude_settings() {
 
         # Show what other keys exist that we're preserving
         local preserved_keys
-        preserved_keys=$(jq -r 'keys | map(select(. != "hooks" and . != "statusLine")) | join(", ")' "$settings_file" 2>/dev/null)
+        preserved_keys=$(jq -r 'keys | map(select(. != "hooks" and . != "statusLine" and . != "model" and . != "permissions")) | join(", ")' "$settings_file" 2>/dev/null)
         if [ -n "$preserved_keys" ]; then
             print_info "Preserving existing settings: $preserved_keys"
         fi
