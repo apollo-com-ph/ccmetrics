@@ -53,6 +53,10 @@ CREATE TABLE sessions (
   model TEXT,
   seven_day_utilization INTEGER,
   seven_day_resets_at TIMESTAMPTZ,
+  five_hour_utilization INTEGER,
+  five_hour_resets_at TIMESTAMPTZ,
+  seven_day_sonnet_utilization INTEGER,
+  seven_day_sonnet_resets_at TIMESTAMPTZ,
   claude_account_email TEXT
 );
 
@@ -105,6 +109,10 @@ CREATE POLICY "Allow insert for anon" ON sessions
 | model | text | - | Yes | No | No |
 | seven_day_utilization | int4 | - | Yes | No | No |
 | seven_day_resets_at | timestamptz | - | Yes | No | No |
+| five_hour_utilization | int4 | - | Yes | No | No |
+| five_hour_resets_at | timestamptz | - | Yes | No | No |
+| seven_day_sonnet_utilization | int4 | - | Yes | No | No |
+| seven_day_sonnet_resets_at | timestamptz | - | Yes | No | No |
 | claude_account_email | text | - | Yes | No | No |
 
 5. Click **Save**

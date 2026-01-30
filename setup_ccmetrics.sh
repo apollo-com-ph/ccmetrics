@@ -553,6 +553,10 @@ fi
 
 SEVEN_DAY_UTIL="null"
 SEVEN_DAY_RESETS="null"
+FIVE_HOUR_UTIL="null"
+FIVE_HOUR_RESETS="null"
+SEVEN_DAY_SONNET_UTIL="null"
+SEVEN_DAY_SONNET_RESETS="null"
 CLAUDE_ACCOUNT_EMAIL=""
 
 CREDENTIALS_FILE="$HOME/.claude/.credentials.json"
@@ -571,6 +575,10 @@ if [ -f "$CREDENTIALS_FILE" ]; then
         if [ -n "$USAGE_RESPONSE" ] && ! echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
             SEVEN_DAY_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.utilization // "null"')
             SEVEN_DAY_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.resets_at // "null"')
+            FIVE_HOUR_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.utilization // "null"')
+            FIVE_HOUR_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.resets_at // "null"')
+            SEVEN_DAY_SONNET_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.utilization // "null"')
+            SEVEN_DAY_SONNET_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.resets_at // "null"')
             debug_log "Full usage API response: $USAGE_RESPONSE"
             log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
         else
@@ -633,6 +641,10 @@ PAYLOAD=$(jq -n \
   --arg model "$MODEL" \
   --argjson seven_day_util "$SEVEN_DAY_UTIL" \
   --arg seven_day_resets "$SEVEN_DAY_RESETS" \
+  --argjson five_hour_util "$FIVE_HOUR_UTIL" \
+  --arg five_hour_resets "$FIVE_HOUR_RESETS" \
+  --argjson seven_day_sonnet_util "$SEVEN_DAY_SONNET_UTIL" \
+  --arg seven_day_sonnet_resets "$SEVEN_DAY_SONNET_RESETS" \
   --arg claude_account "$CLAUDE_ACCOUNT_EMAIL" \
   '{
     session_id: $session_id,
@@ -650,6 +662,10 @@ PAYLOAD=$(jq -n \
     model: $model,
     seven_day_utilization: $seven_day_util,
     seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end),
+    five_hour_utilization: $five_hour_util,
+    five_hour_resets_at: (if $five_hour_resets == "null" then null else $five_hour_resets end),
+    seven_day_sonnet_utilization: $seven_day_sonnet_util,
+    seven_day_sonnet_resets_at: (if $seven_day_sonnet_resets == "null" then null else $seven_day_sonnet_resets end),
     claude_account_email: (if $claude_account == "" then null else $claude_account end)
   }')
 debug_log "payload context_usage_percent=$(echo "$PAYLOAD" | jq -r '.context_usage_percent' 2>/dev/null)"
