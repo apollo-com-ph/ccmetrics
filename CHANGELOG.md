@@ -9,6 +9,21 @@ All notable changes to this project will be documented in this file.
 - CONTRIBUTING.md with contribution guidelines
 - CODE_OF_CONDUCT.md
 - .gitignore for common exclusions
+- OAuth token expiry detection in SessionEnd hook to prevent API failures on idle sessions
+- Retry logic for OAuth API calls (1 retry with 1s delay, skips retry on 401/403)
+- Background OAuth data caching in statusline hook (every 5 minutes, runs async)
+- Cached OAuth data fallback in SessionEnd hook when token is expired
+- Troubleshooting documentation for expired OAuth tokens and idle sessions
+
+### Changed
+- Increased SessionEnd hook timeout from 15s to 20s to accommodate retry logic
+- OAuth API calls now use 3s timeout (down from 5s) with retry on failure
+- Statusline OAuth fetch uses 2s timeout and runs entirely in background (zero impact on rendering)
+
+### Fixed
+- OAuth API failures when Claude Code session is left idle overnight (token expires after ~4 hours)
+- Null utilization fields and `claude_account_email` in database when token is stale
+- Documentation inconsistencies: added missing schema columns (`five_hour_utilization`, `five_hour_resets_at`, `seven_day_sonnet_utilization`, `seven_day_sonnet_resets_at`) to README.md
 
 ## [1.0.0] - 2026-01-28
 

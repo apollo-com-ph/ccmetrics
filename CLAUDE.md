@@ -15,7 +15,9 @@ Hook-based system that collects Claude Code session metadata (cost, duration, to
 
 **Config** (`~/.claude/.ccmetrics-config.json`): `developer_email`, `supabase_url`, `supabase_key`
 
-**Data flow:** Statusline caches metrics → SessionEnd reads cache + transcript → POST to Supabase (empty payloads with 0 tokens, 0 cost, unknown model are skipped) → on failure, queue for retry
+**Data flow:**
+- Statusline caches metrics to `{session_id}.json` → runs background OAuth fetch every 5min (usage/profile) → caches to `{session_id}_oauth.json`
+- SessionEnd reads cache + transcript → checks OAuth token expiry → fetches usage/profile with retry (or uses cached fallback if expired) → POST to Supabase (empty payloads skipped) → on failure, queue for retry
 
 ## Commands
 
@@ -36,6 +38,6 @@ Example: `[Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/project`
 
 ## Database Schema
 
-See `SUPABASE_SETUP.md` for full schema. Key columns: `session_id`, `developer`, `cost_usd`, `input_tokens`, `output_tokens`, `duration_minutes`, `model`, `claude_account_email`.
+See `SUPABASE_SETUP.md` for full schema. Key columns: `session_id`, `developer`, `cost_usd`, `input_tokens`, `output_tokens`, `duration_minutes`, `model`, `claude_account_email`, `seven_day_utilization`, `five_hour_utilization`, `seven_day_sonnet_utilization` (with corresponding `_resets_at` timestamp columns).
 
 RLS enabled with write-only policy (INSERT only) - developers can submit but not read/delete data.

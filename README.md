@@ -32,7 +32,7 @@ bash setup_ccmetrics.sh
 - Context usage percentage (% of model's context window used)
 - Tools used (Edit, Write, Bash, etc.)
 - Message counts
-- 7-day utilization metrics (usage % and reset time)
+- Utilization metrics: 7-day usage %, 5-hour usage %, 7-day Sonnet usage % (with reset times)
 
 **NOT collected:**
 - Conversation content
@@ -86,6 +86,10 @@ CREATE TABLE sessions (
   model TEXT,
   seven_day_utilization INTEGER,
   seven_day_resets_at TIMESTAMPTZ,
+  five_hour_utilization INTEGER,
+  five_hour_resets_at TIMESTAMPTZ,
+  seven_day_sonnet_utilization INTEGER,
+  seven_day_sonnet_resets_at TIMESTAMPTZ,
   claude_account_email TEXT
 );
 
@@ -286,6 +290,23 @@ curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
 # Check queue
 ls ~/.claude/metrics_queue/
 ```
+
+### OAuth token expired / idle sessions
+
+If you leave a Claude Code session idle overnight, the OAuth token may expire (~4 hour lifespan). This can cause utilization metrics and Claude account email to be null in the database.
+
+The hooks now include:
+- **Token expiry detection** - checks if the token expired before making API calls
+- **Automatic retry** - retries failed API calls once with 1-second delay
+- **Cached fallback** - statusline hook caches OAuth data every 5 minutes in the background; SessionEnd uses this if the token is expired
+
+Check the logs for expiry warnings:
+```bash
+tail -f ~/.claude/ccmetrics.log
+# Look for: "⚠️  OAuth token expired X.Xh ago (session was idle). Usage/profile data will use cached fallback."
+```
+
+The cached data is automatically cleaned up and has minimal performance impact (runs in background, never blocks statusline rendering).
 
 ### Disable monitoring
 ```bash

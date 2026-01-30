@@ -398,16 +398,92 @@ debug_log() {
 queue_payload() {
     local payload="$1"
     local queue_file="${QUEUE_DIR}/$(date +%s)_$(uuidgen 2>/dev/null || echo $RANDOM).json"
-    
+
     echo "$payload" > "$queue_file"
     log "⏳ Queued payload to: $queue_file"
-    
+
     # Cleanup old queue if too large
     local queue_count=$(ls -1 "$QUEUE_DIR" 2>/dev/null | wc -l)
     if [ "$queue_count" -gt "$MAX_QUEUE_SIZE" ]; then
         log "⚠️  Queue size exceeded $MAX_QUEUE_SIZE, removing oldest entries"
         ls -1t "$QUEUE_DIR" | tail -n +$((MAX_QUEUE_SIZE + 1)) | xargs -I {} rm -f "$QUEUE_DIR/{}"
     fi
+}
+
+# Check if OAuth token is expired
+# Returns: 0 if valid, 1 if expired or missing
+check_token_expiry() {
+    local credentials_file="$1"
+
+    if [ ! -f "$credentials_file" ]; then
+        return 1
+    fi
+
+    local expires_at=$(jq -r '.claudeAiOauth.expiresAt // empty' "$credentials_file" 2>/dev/null)
+    if [ -z "$expires_at" ]; then
+        return 1
+    fi
+
+    local current_time=$(date +%s)
+    local expires_epoch=$(date -d "$expires_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${expires_at%.*}" +%s 2>/dev/null || echo 0)
+
+    if [ "$expires_epoch" -eq 0 ]; then
+        return 1
+    fi
+
+    if [ "$current_time" -ge "$expires_epoch" ]; then
+        # Token is expired - log how long ago
+        local diff_seconds=$((current_time - expires_epoch))
+        local diff_hours=$(awk "BEGIN {printf \"%.1f\", $diff_seconds / 3600}")
+        log "⚠️  OAuth token expired ${diff_hours}h ago (session was idle). Usage/profile data will use cached fallback."
+        return 1
+    fi
+
+    return 0
+}
+
+# Retry-enabled OAuth API call helper
+# Args: url, description
+# Returns: curl output on success, empty on failure
+oauth_api_call() {
+    local url="$1"
+    local description="$2"
+    local access_token="$3"
+
+    for attempt in 1 2; do
+        local response=$(curl -s --max-time 3 -w "\n%{http_code}" \
+            "$url" \
+            -H "Authorization: Bearer $access_token" \
+            -H "Content-Type: application/json" \
+            -H "anthropic-beta: oauth-2025-04-20" \
+            -H "Accept: application/json" 2>/dev/null)
+
+        local http_code=$(echo "$response" | tail -1)
+        local body=$(echo "$response" | sed '$d')
+
+        # Success
+        if [ "$http_code" = "200" ]; then
+            echo "$response"
+            return 0
+        fi
+
+        # Auth errors won't benefit from retry
+        if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+            log "⚠️  Failed to fetch $description: HTTP $http_code (auth error, skipping retry)"
+            return 1
+        fi
+
+        # Retry on other errors (only on first attempt)
+        if [ "$attempt" -eq 1 ]; then
+            debug_log "Retrying $description after HTTP $http_code..."
+            sleep 1
+        else
+            log "⚠️  Failed to fetch $description: HTTP $http_code (after retry)"
+            return 1
+        fi
+    done
+
+    return 1
 }
 
 # Send a single payload to Supabase
@@ -561,61 +637,90 @@ CLAUDE_ACCOUNT_EMAIL=""
 
 CREDENTIALS_FILE="$HOME/.claude/.credentials.json"
 if [ -f "$CREDENTIALS_FILE" ]; then
-    ACCESS_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
-    if [ -n "$ACCESS_TOKEN" ]; then
-        USAGE_RAW=$(curl -s --max-time 5 -w "\n%{http_code}" \
-            "https://api.anthropic.com/api/oauth/usage" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -H "anthropic-beta: oauth-2025-04-20" \
-            -H "Accept: application/json" 2>/dev/null)
-        USAGE_HTTP_CODE=$(echo "$USAGE_RAW" | tail -1)
-        USAGE_RESPONSE=$(echo "$USAGE_RAW" | sed '$d')
+    # Check token expiry first
+    if check_token_expiry "$CREDENTIALS_FILE"; then
+        ACCESS_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
+        if [ -n "$ACCESS_TOKEN" ]; then
+            # Fetch usage data with retry
+            USAGE_RAW=$(oauth_api_call "https://api.anthropic.com/api/oauth/usage" "usage data" "$ACCESS_TOKEN")
+            if [ -n "$USAGE_RAW" ]; then
+                USAGE_HTTP_CODE=$(echo "$USAGE_RAW" | tail -1)
+                USAGE_RESPONSE=$(echo "$USAGE_RAW" | sed '$d')
 
-        if [ -n "$USAGE_RESPONSE" ] && ! echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-            SEVEN_DAY_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.utilization // "null"')
-            SEVEN_DAY_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.resets_at // "null"')
-            FIVE_HOUR_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.utilization // "null"')
-            FIVE_HOUR_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.resets_at // "null"')
-            SEVEN_DAY_SONNET_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.utilization // "null"')
-            SEVEN_DAY_SONNET_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.resets_at // "null"')
-            debug_log "Full usage API response: $USAGE_RESPONSE"
-            log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
-        else
-            if [ -z "$USAGE_RESPONSE" ]; then
-                log "⚠️  Failed to fetch usage data: empty response (network error or timeout)"
-            elif echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-                USAGE_ERR=$(echo "$USAGE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
-                log "⚠️  Failed to fetch usage data: $USAGE_ERR (HTTP $USAGE_HTTP_CODE)"
-            else
-                log "⚠️  Failed to fetch usage data: HTTP $USAGE_HTTP_CODE"
+                if [ -n "$USAGE_RESPONSE" ] && ! echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+                    SEVEN_DAY_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.utilization // "null"')
+                    SEVEN_DAY_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.resets_at // "null"')
+                    FIVE_HOUR_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.utilization // "null"')
+                    FIVE_HOUR_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.resets_at // "null"')
+                    SEVEN_DAY_SONNET_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.utilization // "null"')
+                    SEVEN_DAY_SONNET_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.resets_at // "null"')
+                    debug_log "Full usage API response: $USAGE_RESPONSE"
+                    log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
+                else
+                    if echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+                        USAGE_ERR=$(echo "$USAGE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
+                        log "⚠️  Failed to fetch usage data: $USAGE_ERR (HTTP $USAGE_HTTP_CODE)"
+                    fi
+                fi
             fi
-        fi
 
-        # Fetch Claude account identity
-        PROFILE_RAW=$(curl -s --max-time 5 -w "\n%{http_code}" \
-            "https://api.anthropic.com/api/oauth/profile" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -H "anthropic-beta: oauth-2025-04-20" \
-            -H "Accept: application/json" 2>/dev/null)
-        PROFILE_HTTP_CODE=$(echo "$PROFILE_RAW" | tail -1)
-        PROFILE_RESPONSE=$(echo "$PROFILE_RAW" | sed '$d')
+            # Fetch profile data with retry
+            PROFILE_RAW=$(oauth_api_call "https://api.anthropic.com/api/oauth/profile" "profile data" "$ACCESS_TOKEN")
+            if [ -n "$PROFILE_RAW" ]; then
+                PROFILE_HTTP_CODE=$(echo "$PROFILE_RAW" | tail -1)
+                PROFILE_RESPONSE=$(echo "$PROFILE_RAW" | sed '$d')
 
-        if [ -n "$PROFILE_RESPONSE" ] && ! echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-            CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
-            log "👤 Claude account: ${CLAUDE_ACCOUNT_EMAIL}"
-        else
-            if [ -z "$PROFILE_RESPONSE" ]; then
-                log "⚠️  Failed to fetch profile data: empty response (network error or timeout)"
-            elif echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-                PROFILE_ERR=$(echo "$PROFILE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
-                log "⚠️  Failed to fetch profile data: $PROFILE_ERR (HTTP $PROFILE_HTTP_CODE)"
-            else
-                log "⚠️  Failed to fetch profile data: HTTP $PROFILE_HTTP_CODE"
+                if [ -n "$PROFILE_RESPONSE" ] && ! echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+                    CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
+                    log "👤 Claude account: ${CLAUDE_ACCOUNT_EMAIL}"
+                else
+                    if echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+                        PROFILE_ERR=$(echo "$PROFILE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
+                        log "⚠️  Failed to fetch profile data: $PROFILE_ERR (HTTP $PROFILE_HTTP_CODE)"
+                    fi
+                fi
             fi
         fi
     fi
+fi
+
+# ============================================================================
+# FALLBACK TO CACHED OAUTH DATA
+# ============================================================================
+
+# If utilization fields are still null, check for cached OAuth data from statusline
+OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}_oauth.json"
+if [[ "$SEVEN_DAY_UTIL" == "null" || -z "$CLAUDE_ACCOUNT_EMAIL" ]] && [ -f "$OAUTH_CACHE_FILE" ]; then
+    log "📂 Using cached OAuth data from statusline hook"
+    CACHED_OAUTH=$(cat "$OAUTH_CACHE_FILE")
+
+    # Calculate cache age
+    CACHED_AT=$(echo "$CACHED_OAUTH" | jq -r '.fetched_at // 0')
+    if [ "$CACHED_AT" -gt 0 ]; then
+        CACHE_AGE_SEC=$(($(date +%s) - CACHED_AT))
+        CACHE_AGE_MIN=$(awk "BEGIN {printf \"%.1f\", $CACHE_AGE_SEC / 60}")
+        log "📅 Cache age: ${CACHE_AGE_MIN} minutes"
+    fi
+
+    # Use cached values if current ones are null
+    if [ "$SEVEN_DAY_UTIL" == "null" ]; then
+        SEVEN_DAY_UTIL=$(echo "$CACHED_OAUTH" | jq -r '.seven_day_utilization // "null"')
+        SEVEN_DAY_RESETS=$(echo "$CACHED_OAUTH" | jq -r '.seven_day_resets_at // "null"')
+    fi
+    if [ "$FIVE_HOUR_UTIL" == "null" ]; then
+        FIVE_HOUR_UTIL=$(echo "$CACHED_OAUTH" | jq -r '.five_hour_utilization // "null"')
+        FIVE_HOUR_RESETS=$(echo "$CACHED_OAUTH" | jq -r '.five_hour_resets_at // "null"')
+    fi
+    if [ "$SEVEN_DAY_SONNET_UTIL" == "null" ]; then
+        SEVEN_DAY_SONNET_UTIL=$(echo "$CACHED_OAUTH" | jq -r '.seven_day_sonnet_utilization // "null"')
+        SEVEN_DAY_SONNET_RESETS=$(echo "$CACHED_OAUTH" | jq -r '.seven_day_sonnet_resets_at // "null"')
+    fi
+    if [ -z "$CLAUDE_ACCOUNT_EMAIL" ]; then
+        CLAUDE_ACCOUNT_EMAIL=$(echo "$CACHED_OAUTH" | jq -r '.claude_account_email // ""')
+    fi
+
+    # Clean up cache file
+    rm -f "$OAUTH_CACHE_FILE"
 fi
 
 # ============================================================================
@@ -784,6 +889,112 @@ if [ -n "$SESSION_ID" ]; then
     fi
 fi
 
+# ============================================================================
+# BACKGROUND OAUTH DATA CACHING (runs async, doesn't block statusline output)
+# ============================================================================
+
+# Run OAuth fetch in background - does not block statusline output
+(
+    # Only fetch every 5 minutes
+    OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}_oauth.json"
+    LAST_FETCH=0
+    if [ -f "$OAUTH_CACHE_FILE" ]; then
+        LAST_FETCH=$(jq -r '.fetched_at // 0' "$OAUTH_CACHE_FILE" 2>/dev/null || echo "0")
+    fi
+
+    CURRENT_TIME=$(date +%s)
+    TIME_SINCE_FETCH=$((CURRENT_TIME - LAST_FETCH))
+
+    # Only fetch if > 5 minutes since last fetch
+    if [ "$TIME_SINCE_FETCH" -lt 300 ]; then
+        exit 0
+    fi
+
+    # Check token expiry
+    CREDENTIALS_FILE="$HOME/.claude/.credentials.json"
+    if [ ! -f "$CREDENTIALS_FILE" ]; then
+        exit 0
+    fi
+
+    EXPIRES_AT=$(jq -r '.claudeAiOauth.expiresAt // empty' "$CREDENTIALS_FILE" 2>/dev/null)
+    if [ -z "$EXPIRES_AT" ]; then
+        exit 0
+    fi
+
+    EXPIRES_EPOCH=$(date -d "$EXPIRES_AT" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${EXPIRES_AT%.*}" +%s 2>/dev/null || echo 0)
+    if [ "$EXPIRES_EPOCH" -eq 0 ] || [ "$CURRENT_TIME" -ge "$EXPIRES_EPOCH" ]; then
+        exit 0
+    fi
+
+    # Token is valid, fetch OAuth data
+    ACCESS_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
+    if [ -z "$ACCESS_TOKEN" ]; then
+        exit 0
+    fi
+
+    # Fetch usage (2s timeout)
+    USAGE_RAW=$(curl -s --max-time 2 -w "\n%{http_code}" \
+        "https://api.anthropic.com/api/oauth/usage" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        -H "Accept: application/json" 2>/dev/null)
+    USAGE_HTTP_CODE=$(echo "$USAGE_RAW" | tail -1)
+    USAGE_RESPONSE=$(echo "$USAGE_RAW" | sed '$d')
+
+    SEVEN_DAY_UTIL="null"
+    SEVEN_DAY_RESETS="null"
+    FIVE_HOUR_UTIL="null"
+    FIVE_HOUR_RESETS="null"
+    SEVEN_DAY_SONNET_UTIL="null"
+    SEVEN_DAY_SONNET_RESETS="null"
+
+    if [ "$USAGE_HTTP_CODE" = "200" ] && [ -n "$USAGE_RESPONSE" ]; then
+        SEVEN_DAY_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.utilization // "null"')
+        SEVEN_DAY_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day.resets_at // "null"')
+        FIVE_HOUR_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.utilization // "null"')
+        FIVE_HOUR_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.five_hour.resets_at // "null"')
+        SEVEN_DAY_SONNET_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.utilization // "null"')
+        SEVEN_DAY_SONNET_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.resets_at // "null"')
+    fi
+
+    # Fetch profile (2s timeout)
+    PROFILE_RAW=$(curl -s --max-time 2 -w "\n%{http_code}" \
+        "https://api.anthropic.com/api/oauth/profile" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        -H "Accept: application/json" 2>/dev/null)
+    PROFILE_HTTP_CODE=$(echo "$PROFILE_RAW" | tail -1)
+    PROFILE_RESPONSE=$(echo "$PROFILE_RAW" | sed '$d')
+
+    CLAUDE_ACCOUNT_EMAIL=""
+    if [ "$PROFILE_HTTP_CODE" = "200" ] && [ -n "$PROFILE_RESPONSE" ]; then
+        CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
+    fi
+
+    # Write cache
+    jq -n \
+        --argjson fetched_at "$CURRENT_TIME" \
+        --argjson seven_day_util "$SEVEN_DAY_UTIL" \
+        --arg seven_day_resets "$SEVEN_DAY_RESETS" \
+        --argjson five_hour_util "$FIVE_HOUR_UTIL" \
+        --arg five_hour_resets "$FIVE_HOUR_RESETS" \
+        --argjson seven_day_sonnet_util "$SEVEN_DAY_SONNET_UTIL" \
+        --arg seven_day_sonnet_resets "$SEVEN_DAY_SONNET_RESETS" \
+        --arg claude_account "$CLAUDE_ACCOUNT_EMAIL" \
+        '{
+            fetched_at: $fetched_at,
+            seven_day_utilization: $seven_day_util,
+            seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end),
+            five_hour_utilization: $five_hour_util,
+            five_hour_resets_at: (if $five_hour_resets == "null" then null else $five_hour_resets end),
+            seven_day_sonnet_utilization: $seven_day_sonnet_util,
+            seven_day_sonnet_resets_at: (if $seven_day_sonnet_resets == "null" then null else $seven_day_sonnet_resets end),
+            claude_account_email: (if $claude_account == "" then null else $claude_account end)
+        }' > "$OAUTH_CACHE_FILE" 2>/dev/null
+) &
+
 # Extract data using jq
 MODEL=$(echo "$INPUT" | jq -r '.model.display_name // .model.id // "Unknown"')
 INPUT_TOKENS=$(echo "$INPUT" | jq -r '.context_window.total_input_tokens // 0')
@@ -948,7 +1159,7 @@ get_ccmetrics_config() {
           {
             "type": "command",
             "command": "~/.claude/hooks/send_claude_metrics.sh",
-            "timeout": 15
+            "timeout": 20
           }
         ]
       }
