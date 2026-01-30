@@ -6,19 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hook-based system that collects Claude Code session metadata (cost, duration, tokens) and stores it in Supabase. Privacy-first: only metadata, never conversation content or code.
 
-## ⚠️ Bash Tool - ALWAYS Use Full Paths
-
-Shell state resets between commands. **NEVER run bare commands like `git status`.**
-
-```bash
-# CORRECT:
-git -C /home/jessie/cc_workspace/ccmetrics status
-cd /home/jessie/cc_workspace/ccmetrics && git status
-
-# WRONG - will fail:
-git status
-```
-
 ## Architecture
 
 **Hooks** (in `~/.claude/hooks/`):
