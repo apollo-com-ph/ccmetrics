@@ -60,37 +60,7 @@ Note: `awk` and `curl` are pre-installed on most Unix systems.
 
 1. Go to [supabase.com](https://supabase.com)
 2. Create new project (free tier)
-3. Create table:
-```sql
-CREATE TABLE sessions (
-  id BIGSERIAL PRIMARY KEY,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  session_id TEXT NOT NULL,
-  developer TEXT NOT NULL,
-  hostname TEXT,
-  project_path TEXT,
-  duration_minutes NUMERIC(10,2),
-  cost_usd NUMERIC(10,4),
-  input_tokens INTEGER,
-  output_tokens INTEGER,
-  message_count INTEGER,
-  user_message_count INTEGER,
-  tools_used TEXT,
-  context_usage_percent NUMERIC(5,2),
-  model TEXT,
-  seven_day_utilization INTEGER,
-  seven_day_resets_at TIMESTAMPTZ,
-  five_hour_utilization INTEGER,
-  five_hour_resets_at TIMESTAMPTZ,
-  seven_day_sonnet_utilization INTEGER,
-  seven_day_sonnet_resets_at TIMESTAMPTZ,
-  claude_account_email TEXT
-);
-
-CREATE INDEX idx_developer ON sessions(developer);
-CREATE INDEX idx_created_at ON sessions(created_at);
-```
-
+3. Follow the complete setup instructions in `SUPABASE_SETUP.md` to create the `sessions` table with proper RLS policies
 4. Get credentials from Settings → API:
    - Project URL
    - Publishable key (starts with `sb_publishable_`) or legacy `anon` public key
@@ -120,6 +90,7 @@ The setup script safely merges with existing `settings.json`:
 - Appends hooks without overwriting other hooks
 - Creates timestamped backups before any modification
 - Validates JSON before writing
+- Sets default model to `opusplan` and permission mode to `plan`
 
 ### 3. Verify Installation
 ```bash
@@ -181,7 +152,7 @@ The script includes formatting functions:
 - `format_percentage()` - 2 digit percentage with zero padding
 - `format_duration()` - 4 digit minutes with zero padding
 - `format_cost()` - 4 char cost display ($0.0 to $999)
-- `format_tokens()` - 4 char token display (0.0K to 999K)
+- `format_tokens()` - 4 char token display (0 to 999K)
 - `format_project_dir()` - Truncates from left if too long
 
 Example customizations:
@@ -245,7 +216,8 @@ ORDER BY date DESC;
 ├── metrics_queue/                   # Retry queue for failed sends
 │   └── [timestamp]_[uuid].json
 ├── metrics_cache/                   # Session data cache for SessionEnd
-│   └── [session_id].json
+│   ├── [session_id].json
+│   └── [session_id]_oauth.json
 └── hooks/
     ├── send_claude_metrics.sh       # Main metrics collection hook
     ├── process_metrics_queue.sh     # Queue processor (SessionStart)

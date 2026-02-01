@@ -184,7 +184,8 @@ if [[ -f ~/.claude/hooks/ccmetrics_statusline.sh ]] && [[ -x ~/.claude/hooks/ccm
     "display_name": "Sonnet 4.5"
   },
   "cost": {
-    "total_cost_usd": 1.23
+    "total_cost_usd": 1.23,
+    "total_duration_ms": 720000
   },
   "context_window": {
     "total_input_tokens": 45000,
@@ -192,7 +193,7 @@ if [[ -f ~/.claude/hooks/ccmetrics_statusline.sh ]] && [[ -x ~/.claude/hooks/ccm
     "used_percentage": 28
   },
   "workspace": {
-    "current_dir": "/home/user/test"
+    "project_dir": "/home/user/test"
   }
 }
 EOF
