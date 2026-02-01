@@ -425,7 +425,12 @@ check_token_expiry() {
     fi
 
     local current_time=$(date +%s)
-    local expires_epoch=$(date -d "$expires_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${expires_at%.*}" +%s 2>/dev/null || echo 0)
+    local expires_epoch
+    if echo "$expires_at" | grep -qE '^[0-9]+$'; then
+        expires_epoch=$((expires_at / 1000))
+    else
+        expires_epoch=$(date -d "$expires_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${expires_at%.*}" +%s 2>/dev/null || echo 0)
+    fi
 
     if [ "$expires_epoch" -eq 0 ]; then
         return 1
@@ -813,11 +818,11 @@ PAYLOAD=$(jq -n \
     tools_used: $tools,
     context_usage_percent: ($context_percent | tonumber),
     model: $model,
-    seven_day_utilization: $seven_day_util,
+    seven_day_utilization: (if $seven_day_util == null then null else ($seven_day_util | floor) end),
     seven_day_resets_at: (if $seven_day_resets == "null" then null else $seven_day_resets end),
-    five_hour_utilization: $five_hour_util,
+    five_hour_utilization: (if $five_hour_util == null then null else ($five_hour_util | floor) end),
     five_hour_resets_at: (if $five_hour_resets == "null" then null else $five_hour_resets end),
-    seven_day_sonnet_utilization: $seven_day_sonnet_util,
+    seven_day_sonnet_utilization: (if $seven_day_sonnet_util == null then null else ($seven_day_sonnet_util | floor) end),
     seven_day_sonnet_resets_at: (if $seven_day_sonnet_resets == "null" then null else $seven_day_sonnet_resets end),
     claude_account_email: (if $claude_account == "" then null else $claude_account end)
   }')
@@ -979,7 +984,11 @@ fi
         exit 0
     fi
 
-    EXPIRES_EPOCH=$(date -d "$EXPIRES_AT" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${EXPIRES_AT%.*}" +%s 2>/dev/null || echo 0)
+    if echo "$EXPIRES_AT" | grep -qE '^[0-9]+$'; then
+        EXPIRES_EPOCH=$((EXPIRES_AT / 1000))
+    else
+        EXPIRES_EPOCH=$(date -d "$EXPIRES_AT" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${EXPIRES_AT%.*}" +%s 2>/dev/null || echo 0)
+    fi
     if [ "$EXPIRES_EPOCH" -eq 0 ] || [ "$CURRENT_TIME" -ge "$EXPIRES_EPOCH" ]; then
         exit 0
     fi
