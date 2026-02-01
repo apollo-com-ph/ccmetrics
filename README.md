@@ -12,13 +12,7 @@ Automated metadata collection for Claude Code sessions with Supabase storage and
 
 ## Quick Install
 ```bash
-curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh | bash
-```
-
-Or download and inspect first:
-```bash
-curl -O https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh
-bash setup_ccmetrics.sh
+curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh -o /tmp/setup_ccmetrics.sh && bash /tmp/setup_ccmetrics.sh && rm /tmp/setup_ccmetrics.sh
 ```
 
 ## What Gets Tracked
@@ -103,7 +97,7 @@ CREATE INDEX idx_created_at ON sessions(created_at);
 
 ### 2. Run Setup Script
 ```bash
-curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh | bash
+curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh -o /tmp/setup_ccmetrics.sh && bash /tmp/setup_ccmetrics.sh && rm /tmp/setup_ccmetrics.sh
 ```
 
 Enter your Supabase URL, API key, and work email when prompted.
