@@ -84,7 +84,6 @@ prompt_overwrite_field() {
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         return 1  # User wants to overwrite
     else
-        echo "$current_value"  # Return old value to stdout for capture
         return 0  # User wants to keep
     fi
 }
