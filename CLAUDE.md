@@ -13,7 +13,7 @@ Hook-based system that collects Claude Code session metadata (cost, duration, to
 - `send_claude_metrics.sh` - reads cache on SessionEnd, POSTs to Supabase
 - `process_metrics_queue.sh` - retries failed sends from `~/.claude/metrics_queue/`
 
-**Config** (`~/.claude/.ccmetrics-config.json`): `developer_email`, `supabase_url`, `supabase_key`
+**Config** (`~/.claude/.ccmetrics-config.json`): `developer_email`, `supabase_url`, `supabase_key`, `created_at` (ISO timestamp), `debug` (boolean, default false)
 
 **Data flow:**
 - Statusline caches metrics to `{session_id}.json` → runs background OAuth fetch every 5min (usage/profile) → caches to `{session_id}_oauth.json`
