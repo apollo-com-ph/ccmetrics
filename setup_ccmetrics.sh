@@ -63,6 +63,32 @@ print_info() {
     echo -e "${BLUE}ℹ${NC} $1"
 }
 
+# Prompt before overwriting a config field
+# Args: field_name, current_value, mask (optional, if "true" shows [existing] instead of value)
+# Returns: 0 + echoes old value if user says N (keep), 1 if user says Y (overwrite)
+prompt_overwrite_field() {
+    local field_name="$1"
+    local current_value="$2"
+    local mask="${3:-false}"
+
+    # Display current value (masked if needed)
+    local display_value="$current_value"
+    if [ "$mask" = "true" ]; then
+        display_value="[existing]"
+    fi
+
+    echo -e "  ${field_name}: ${display_value}" >&2
+    read -p "  Overwrite? (y/N): " -n 1 -r >&2
+    echo >&2
+
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        return 1  # User wants to overwrite
+    else
+        echo "$current_value"  # Return old value to stdout for capture
+        return 0  # User wants to keep
+    fi
+}
+
 # Show usage
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
@@ -206,68 +232,126 @@ collect_config() {
     local EXISTING_EMAIL=""
     local EXISTING_URL=""
     local EXISTING_KEY=""
+    local EXISTING_DEBUG=""
 
     if [ -f "$config_file" ]; then
-        print_info "Found existing configuration. Press Enter to keep current values."
+        print_info "Found existing configuration."
         EXISTING_EMAIL=$(jq -r '.developer_email // empty' "$config_file" 2>/dev/null)
         EXISTING_URL=$(jq -r '.supabase_url // empty' "$config_file" 2>/dev/null)
         EXISTING_KEY=$(jq -r '.supabase_key // empty' "$config_file" 2>/dev/null)
+        EXISTING_DEBUG=$(jq -r '.debug // false' "$config_file" 2>/dev/null)
         echo ""
     fi
 
-    # Work Email (first prompt)
-    local default_email="${EXISTING_EMAIL:-${USER}@${HOSTNAME}}"
-    read -p "Enter your work email (default: $default_email): " WORK_EMAIL
-    WORK_EMAIL=${WORK_EMAIL:-$default_email}
-
-    if [[ ! $WORK_EMAIL =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        print_warning "Email format may be invalid, but continuing..."
+    # Work Email - prompt for overwrite if existing value present
+    if [ -n "$EXISTING_EMAIL" ]; then
+        if prompt_overwrite_field "developer_email" "$EXISTING_EMAIL" false; then
+            WORK_EMAIL="$EXISTING_EMAIL"
+        else
+            # User wants to overwrite, prompt for new value
+            read -p "Enter your work email: " WORK_EMAIL
+            if [[ ! $WORK_EMAIL =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+                print_warning "Email format may be invalid, but continuing..."
+            fi
+        fi
+    else
+        # Fresh install - use original prompt
+        local default_email="${USER}@${HOSTNAME}"
+        read -p "Enter your work email (default: $default_email): " WORK_EMAIL
+        WORK_EMAIL=${WORK_EMAIL:-$default_email}
+        if [[ ! $WORK_EMAIL =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+            print_warning "Email format may be invalid, but continuing..."
+        fi
     fi
     echo ""
 
-    # Supabase URL (second prompt)
-    while true; do
-        if [ -n "$EXISTING_URL" ]; then
-            read -p "Enter your Supabase Project URL (default: $EXISTING_URL): " SUPABASE_URL
-            SUPABASE_URL=${SUPABASE_URL:-$EXISTING_URL}
+    # Supabase URL - prompt for overwrite if existing value present
+    if [ -n "$EXISTING_URL" ]; then
+        if prompt_overwrite_field "supabase_url" "$EXISTING_URL" false; then
+            SUPABASE_URL="$EXISTING_URL"
         else
-            read -p "Enter your Supabase Project URL (e.g., https://xxxxx.supabase.co): " SUPABASE_URL
-        fi
-
-        if [[ $SUPABASE_URL =~ ^https://.*\.supabase\.co$ ]]; then
-            break
-        else
-            print_error "Invalid Supabase URL format. Should be: https://xxxxx.supabase.co"
-        fi
-    done
-
-    # Supabase API Key (third prompt)
-    while true; do
-        if [ -n "$EXISTING_KEY" ]; then
-            read -p "Enter your Supabase publishable key (default: [existing]): " SUPABASE_KEY
-            SUPABASE_KEY=${SUPABASE_KEY:-$EXISTING_KEY}
-        else
-            read -p "Enter your Supabase publishable key (starts with sb_publishable_): " SUPABASE_KEY
-        fi
-
-        if [ -n "$SUPABASE_KEY" ]; then
-            # Validate publishable key format (skip if using existing key)
-            if [[ ! $SUPABASE_KEY =~ ^sb_publishable_ ]]; then
-                print_warning "Key doesn't start with 'sb_publishable_'. Legacy anon keys are deprecated."
-                read -p "Continue anyway? (y/n) " -n 1 -r
-                echo
-                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    print_info "Get your publishable key from: Supabase Dashboard > Project Settings > API"
-                    exit 1
+            # User wants to overwrite, prompt for new value with validation
+            while true; do
+                read -p "Enter your Supabase Project URL (e.g., https://xxxxx.supabase.co): " SUPABASE_URL
+                if [[ $SUPABASE_URL =~ ^https://.*\.supabase\.co$ ]]; then
+                    break
+                else
+                    print_error "Invalid Supabase URL format. Should be: https://xxxxx.supabase.co"
                 fi
-            fi
-            break
-        else
-            print_error "API key cannot be empty"
+            done
         fi
-    done
-
+    else
+        # Fresh install - use original prompt with validation
+        while true; do
+            read -p "Enter your Supabase Project URL (e.g., https://xxxxx.supabase.co): " SUPABASE_URL
+            if [[ $SUPABASE_URL =~ ^https://.*\.supabase\.co$ ]]; then
+                break
+            else
+                print_error "Invalid Supabase URL format. Should be: https://xxxxx.supabase.co"
+            fi
+        done
+    fi
     echo ""
+
+    # Supabase API Key - prompt for overwrite if existing value present (masked)
+    if [ -n "$EXISTING_KEY" ]; then
+        if prompt_overwrite_field "supabase_key" "$EXISTING_KEY" true; then
+            SUPABASE_KEY="$EXISTING_KEY"
+        else
+            # User wants to overwrite, prompt for new value with validation
+            while true; do
+                read -p "Enter your Supabase publishable key (starts with sb_publishable_): " SUPABASE_KEY
+                if [ -n "$SUPABASE_KEY" ]; then
+                    if [[ ! $SUPABASE_KEY =~ ^sb_publishable_ ]]; then
+                        print_warning "Key doesn't start with 'sb_publishable_'. Legacy anon keys are deprecated."
+                        read -p "Continue anyway? (y/n) " -n 1 -r
+                        echo
+                        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                            print_info "Get your publishable key from: Supabase Dashboard > Project Settings > API"
+                            exit 1
+                        fi
+                    fi
+                    break
+                else
+                    print_error "API key cannot be empty"
+                fi
+            done
+        fi
+    else
+        # Fresh install - use original prompt with validation
+        while true; do
+            read -p "Enter your Supabase publishable key (starts with sb_publishable_): " SUPABASE_KEY
+            if [ -n "$SUPABASE_KEY" ]; then
+                if [[ ! $SUPABASE_KEY =~ ^sb_publishable_ ]]; then
+                    print_warning "Key doesn't start with 'sb_publishable_'. Legacy anon keys are deprecated."
+                    read -p "Continue anyway? (y/n) " -n 1 -r
+                    echo
+                    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                        print_info "Get your publishable key from: Supabase Dashboard > Project Settings > API"
+                        exit 1
+                    fi
+                fi
+                break
+            else
+                print_error "API key cannot be empty"
+            fi
+        done
+    fi
+    echo ""
+
+    # Debug - only prompt if existing value is true (default is false, so no point prompting when already false)
+    if [ "$EXISTING_DEBUG" = "true" ]; then
+        if prompt_overwrite_field "debug" "true" false; then
+            DEBUG_VALUE="true"
+        else
+            DEBUG_VALUE="false"
+        fi
+        echo ""
+    else
+        # No existing config or debug is already false
+        DEBUG_VALUE="false"
+    fi
+
     print_success "Configuration collected"
 }
 
@@ -296,12 +380,13 @@ create_config_file() {
         --arg email "$WORK_EMAIL" \
         --arg url "$SUPABASE_URL" \
         --arg key "$SUPABASE_KEY" \
+        --argjson debug "$DEBUG_VALUE" \
         '{
             developer_email: $email,
             supabase_url: $url,
             supabase_key: $key,
             created_at: (now | todate),
-            debug: false
+            debug: $debug
         }' > "$config_file"
 
     # Secure the file (only user can read/write)
@@ -1298,6 +1383,8 @@ remove_ccmetrics_hooks() {
 # Merge ccmetrics config into existing settings
 merge_ccmetrics_config() {
     local settings_file="$1"
+    local target_model="$2"
+    local target_mode="$3"
     local ccmetrics_config
     ccmetrics_config=$(get_ccmetrics_config)
 
@@ -1308,13 +1395,13 @@ merge_ccmetrics_config() {
 
         # Deep merge: existing settings + ccmetrics config
         # For hooks arrays, we append rather than replace
-        echo "$cleaned" | jq --argjson cc "$ccmetrics_config" '
-        # Set model
-        .model = $cc.model |
+        echo "$cleaned" | jq --argjson cc "$ccmetrics_config" --arg model "$target_model" --arg mode "$target_mode" '
+        # Set model to target value
+        .model = $model |
 
-        # Set permissions.defaultMode (preserves existing allow/deny)
+        # Set permissions.defaultMode to target value (preserves existing allow/deny)
         .permissions = (.permissions // {}) |
-        .permissions.defaultMode = $cc.permissions.defaultMode |
+        .permissions.defaultMode = $mode |
 
         # Set statusLine (ccmetrics takes precedence)
         .statusLine = $cc.statusLine |
@@ -1329,8 +1416,11 @@ merge_ccmetrics_config() {
         .hooks.SessionStart = ((.hooks.SessionStart // []) + $cc.hooks.SessionStart)
         '
     else
-        # No existing settings, use ccmetrics config as-is
-        echo "$ccmetrics_config"
+        # No existing settings, use target values with ccmetrics hooks
+        echo "$ccmetrics_config" | jq --arg model "$target_model" --arg mode "$target_mode" '
+        .model = $model |
+        .permissions.defaultMode = $mode
+        '
     fi
 }
 
@@ -1364,9 +1454,41 @@ configure_claude_settings() {
         print_info "ccmetrics hooks already installed, updating..."
     fi
 
+    # Determine target model and defaultMode values (with prompting if existing file differs)
+    local new_model="opusplan"
+    local new_default_mode="plan"
+
+    # Only prompt when NOT in dry-run mode and settings file exists
+    if [ "$DRY_RUN" != true ] && [ -f "$settings_file" ]; then
+        local existing_model=$(jq -r '.model // empty' "$settings_file" 2>/dev/null)
+        local existing_mode=$(jq -r '.permissions.defaultMode // empty' "$settings_file" 2>/dev/null)
+
+        # Only prompt for model if existing value differs from ccmetrics default
+        if [ -n "$existing_model" ] && [ "$existing_model" != "opusplan" ]; then
+            echo ""
+            echo -e "  model: ${existing_model} → opusplan" >&2
+            read -p "  Overwrite? (y/N): " -n 1 -r >&2
+            echo >&2
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                new_model="$existing_model"
+            fi
+        fi
+
+        # Only prompt for defaultMode if existing value differs from ccmetrics default
+        if [ -n "$existing_mode" ] && [ "$existing_mode" != "plan" ]; then
+            echo -e "  permissions.defaultMode: ${existing_mode} → plan" >&2
+            read -p "  Overwrite? (y/N): " -n 1 -r >&2
+            echo >&2
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                new_default_mode="$existing_mode"
+            fi
+            echo ""
+        fi
+    fi
+
     # Generate merged configuration
     local new_settings
-    new_settings=$(merge_ccmetrics_config "$settings_file")
+    new_settings=$(merge_ccmetrics_config "$settings_file" "$new_model" "$new_default_mode")
 
     # Validate JSON before proceeding
     if ! echo "$new_settings" | jq empty 2>/dev/null; then
