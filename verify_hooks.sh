@@ -284,6 +284,29 @@ else
     print_fail "Queue processor not available for testing"
 fi
 
+# 9. VS Code Extension Detection
+print_section "VS Code Extension Detection"
+
+VSCODE_EXT_DETECTED=false
+for ext_dir in "$HOME/.vscode/extensions" "$HOME/.vscode-server/extensions"; do
+    if [[ -d "$ext_dir" ]] && ls "$ext_dir"/anthropic.claude-code* >/dev/null 2>&1; then
+        VSCODE_EXT_DETECTED=true
+        print_pass "VS Code Claude Code extension detected"
+        echo ""
+        echo "  VS Code Compatibility Information:"
+        echo "  • Native UI mode: Session metrics collected ✓, statusline NOT displayed ✗"
+        echo "  • Terminal mode: Full feature support (set \"claudeCode.useTerminal\": true)"
+        echo "  • Data differences: context % in native UI is final value, not peak"
+        echo ""
+        break
+    fi
+done
+
+if [[ "$VSCODE_EXT_DETECTED" == false ]]; then
+    echo "  VS Code extension not detected (CLI mode assumed)"
+    echo "  All features available ✓"
+fi
+
 # Summary
 print_section "Summary"
 TOTAL=$((PASS_COUNT + FAIL_COUNT))

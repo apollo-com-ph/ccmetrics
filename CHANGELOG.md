@@ -14,6 +14,11 @@ All notable changes to this project will be documented in this file.
 - Background OAuth data caching in statusline hook (every 5 minutes, runs async)
 - Cached OAuth data fallback in SessionEnd hook when token is expired
 - Troubleshooting documentation for expired OAuth tokens and idle sessions
+- VS Code extension compatibility documentation (README.md)
+- `metrics_source` field to database schema ("cache" from statusline or "stdin" from fallback)
+- `client_type` field to database schema ("cli" or "vscode")
+- VS Code extension detection in `setup_ccmetrics.sh` with advisory about native UI limitations
+- VS Code extension detection in `verify_hooks.sh` with compatibility information
 
 ### Changed
 - Increased SessionEnd hook timeout from 15s to 20s to accommodate retry logic

@@ -20,6 +20,7 @@ See `README.md` for user-facing install, usage, and troubleshooting docs.
 **Data flow:**
 - Statusline caches metrics to `{session_id}.json` → runs background OAuth fetch every 5min (usage/profile) → caches to `{session_id}_oauth.json`
 - SessionEnd reads cache + transcript → checks OAuth token expiry → fetches usage/profile with retry (or uses cached fallback if expired) → POST to Supabase (empty payloads skipped) → on failure, queue for retry
+- **VS Code compatibility:** SessionEnd has stdin fallback when no cache exists (native UI mode), so metrics collection works in both CLI and VS Code
 
 ## Commands
 
@@ -40,6 +41,6 @@ Example: `[Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/project`
 
 ## Database Schema
 
-See `SUPABASE_SETUP.md` for full schema. Key columns: `session_id`, `developer`, `cost_usd`, `input_tokens`, `output_tokens`, `duration_minutes`, `model`, `claude_account_email`, `seven_day_utilization`, `five_hour_utilization`, `seven_day_sonnet_utilization` (with corresponding `_resets_at` timestamp columns).
+See `SUPABASE_SETUP.md` for full schema. Key columns: `session_id`, `developer`, `cost_usd`, `input_tokens`, `output_tokens`, `duration_minutes`, `model`, `claude_account_email`, `seven_day_utilization`, `five_hour_utilization`, `seven_day_sonnet_utilization` (with corresponding `_resets_at` timestamp columns), `metrics_source` ("cache" or "stdin"), `client_type` ("cli" or "vscode").
 
 RLS enabled with write-only policy (INSERT only) - developers can submit but not read/delete data.
