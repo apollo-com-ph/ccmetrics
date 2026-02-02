@@ -125,7 +125,7 @@ If you use Claude Code through the VS Code extension instead of the CLI, follow 
 
 ### Statusline not showing?
 
-The VS Code native UI mode does not display the statusline. Your metrics are still being collected and sent -- you just won't see the real-time `[Sonnet 4.5]28%/0012/$1.2/...` display.
+The VS Code native UI mode does not display the statusline. Your metrics are still being collected and sent -- you just won't see the real-time `[Sonnet 4.5]38%/$7.4 (72% 4h12m 5h) ...` display.
 
 If you want the statusline, switch to terminal mode by adding this to your VS Code `settings.json` (Ctrl/Cmd+Shift+P → "Preferences: Open User Settings (JSON)"):
 
@@ -137,10 +137,12 @@ Then reload VS Code. Terminal mode gives you the same experience as the CLI, inc
 
 ## Statusline Display
 
-Format: `[Model]%/min/$usd/inK/outK/totK /path`
+Format: `[Model]%/$usd (remaining% reset label) parent/project`
 ```
-[Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/projects/myapp
+[Sonnet 4.5]38%/$7.4 (72% 4h12m 5h) cc_workspace/ccmetrics
 ```
+
+The parenthetical shows API utilization: remaining capacity %, time until reset, and which limit (5h or 7d). Displays whichever limit has lower remaining %. Shows `(-- ----- --)` when OAuth data is unavailable.
 
 To customize, edit `~/.claude/hooks/ccmetrics_statusline.sh` -- see comments in the script for available fields and formatting functions.
 

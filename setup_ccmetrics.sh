@@ -989,8 +989,8 @@ create_statusline_script() {
 set -euo pipefail
 
 #############################################################################
-# Custom Claude Code Statusline - Comprehensive Session Metrics
-# Shows: [Model]%/min/$usd/inK/outK/totK /path
+# Custom Claude Code Statusline - Session Metrics & API Utilization
+# Shows: [Model]%/$usd (remaining% reset label) parent/project
 #############################################################################
 
 # Cache directory for metrics (shared with SessionEnd hook)
@@ -1164,15 +1164,9 @@ fi
 
 # Extract data using jq
 MODEL=$(echo "$INPUT" | jq -r '.model.display_name // .model.id // "Unknown"')
-INPUT_TOKENS=$(echo "$INPUT" | jq -r '.context_window.total_input_tokens // 0')
-OUTPUT_TOKENS=$(echo "$INPUT" | jq -r '.context_window.total_output_tokens // 0')
 USED_PCT=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0')
-DURATION_MS=$(echo "$INPUT" | jq -r '.cost.total_duration_ms // 0')
 COST_USD=$(echo "$INPUT" | jq -r '.cost.total_cost_usd // 0')
 PROJECT_DIR=$(echo "$INPUT" | jq -r '.workspace.project_dir // ""')
-
-# Calculate total tokens
-TOTAL_TOKENS=$((INPUT_TOKENS + OUTPUT_TOKENS))
 
 # Format model name: 10 chars, right padded with spaces
 format_model() {
@@ -1185,13 +1179,6 @@ format_percentage() {
     local pct="$1"
     local rounded=$(awk "BEGIN {printf \"%.0f\", $pct + 0.5}")
     printf "%02d%%" "$rounded"
-}
-
-# Format duration: 4 chars, minutes, left padded with 0
-format_duration() {
-    local ms="$1"
-    local minutes=$(awk "BEGIN {printf \"%.0f\", ($ms + 30000) / 60000}")
-    printf "%04d" "$minutes"
 }
 
 # Format cost: 4 chars, $0.0 to $999, right padded
@@ -1227,36 +1214,7 @@ format_cost() {
     printf "\$%3.0f" "$cost"
 }
 
-# Format tokens: 4 chars, 0.0K to 999K
-format_tokens() {
-    local tokens=$1
-
-    # 0-999: "   X" (right aligned, no K)
-    if [ "$tokens" -lt 1000 ]; then
-        printf "%4d" "$tokens"
-        return
-    fi
-
-    # 1000-9999: "X.XK" (1 decimal)
-    if [ "$tokens" -lt 10000 ]; then
-        local k_value=$(awk "BEGIN {printf \"%.1f\", $tokens / 1000}")
-        printf "%sK" "$k_value"
-        return
-    fi
-
-    # 10000-99999: " XXK" (space padded)
-    if [ "$tokens" -lt 100000 ]; then
-        local k_int=$(awk "BEGIN {printf \"%.0f\", $tokens / 1000}")
-        printf "%3dK" "$k_int"
-        return
-    fi
-
-    # 100000-999999: "XXXK"
-    local k_int=$(awk "BEGIN {printf \"%.0f\", $tokens / 1000}")
-    printf "%3dK" "$k_int"
-}
-
-# Format project directory: truncate from left if too long
+# Format project directory: last 2 path components
 format_project_dir() {
     local path="$1"
 
@@ -1266,39 +1224,152 @@ format_project_dir() {
         return
     fi
 
-    # Get terminal width
-    local term_width=$(tput cols 2>/dev/null || echo 80)
+    # Extract last 2 path components
+    local parent=$(basename "$(dirname "$path")")
+    local leaf=$(basename "$path")
+    if [ "$parent" = "/" ] || [ "$parent" = "." ]; then
+        path="$leaf"
+    else
+        path="${parent}/${leaf}"
+    fi
 
-    # Fixed width of format: 40 chars
-    local fixed_width=40
-    local path_max=$((term_width - fixed_width - 1))
+    echo "$path"
+}
 
-    # If terminal too narrow, omit path
-    if [ "$path_max" -lt 10 ]; then
-        echo ""
+# Format reset time: ISO timestamp → "XhXXm" or "XdXXh"
+format_reset_time() {
+    local resets_at="$1"
+
+    if [ -z "$resets_at" ] || [ "$resets_at" = "null" ]; then
+        echo "-----"
         return
     fi
 
-    # Truncate from left if needed
-    if [ ${#path} -gt $path_max ]; then
-        echo "...${path: -$((path_max - 3))}"
-    else
-        echo "$path"
+    # Parse ISO timestamp to epoch
+    local reset_epoch
+    reset_epoch=$(date -d "$resets_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${resets_at%.*}" +%s 2>/dev/null || echo 0)
+    if [ "$reset_epoch" -eq 0 ]; then
+        echo "-----"
+        return
     fi
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local diff_seconds=$((reset_epoch - now_epoch))
+
+    # If already past, show 0
+    if [ "$diff_seconds" -le 0 ]; then
+        echo "0h00m"
+        return
+    fi
+
+    local total_hours=$((diff_seconds / 3600))
+    local remaining_minutes=$(( (diff_seconds % 3600) / 60 ))
+
+    # Use "XdXXh" format if >= 24 hours
+    if [ "$total_hours" -ge 24 ]; then
+        local days=$((total_hours / 24))
+        local hours=$((total_hours % 24))
+        printf "%dd%02dh" "$days" "$hours"
+    else
+        printf "%dh%02dm" "$total_hours" "$remaining_minutes"
+    fi
+}
+
+# Read OAuth cache and select which utilization to display
+# Logic: show whichever limit has lower remaining %, tie-break to longer reset time
+format_utilization() {
+    local session_id="$1"
+    local oauth_cache="${METRICS_CACHE_DIR}/${session_id}_oauth.json"
+
+    # No OAuth data available
+    if [ ! -f "$oauth_cache" ]; then
+        echo "(-- ----- --)"
+        return
+    fi
+
+    local five_hour_util seven_day_util five_hour_resets seven_day_resets
+    five_hour_util=$(jq -r '.five_hour_utilization // "null"' "$oauth_cache" 2>/dev/null)
+    seven_day_util=$(jq -r '.seven_day_utilization // "null"' "$oauth_cache" 2>/dev/null)
+    five_hour_resets=$(jq -r '.five_hour_resets_at // "null"' "$oauth_cache" 2>/dev/null)
+    seven_day_resets=$(jq -r '.seven_day_resets_at // "null"' "$oauth_cache" 2>/dev/null)
+
+    local have_5h=false have_7d=false
+    if [ "$five_hour_util" != "null" ] && [ -n "$five_hour_util" ]; then
+        have_5h=true
+    fi
+    if [ "$seven_day_util" != "null" ] && [ -n "$seven_day_util" ]; then
+        have_7d=true
+    fi
+
+    # Neither available
+    if [ "$have_5h" = "false" ] && [ "$have_7d" = "false" ]; then
+        echo "(-- ----- --)"
+        return
+    fi
+
+    # Calculate remaining percentages (100 - utilization)
+    local five_hour_remaining seven_day_remaining
+    if [ "$have_5h" = "true" ]; then
+        five_hour_remaining=$(awk "BEGIN {printf \"%.0f\", 100 - $five_hour_util}")
+    fi
+    if [ "$have_7d" = "true" ]; then
+        seven_day_remaining=$(awk "BEGIN {printf \"%.0f\", 100 - $seven_day_util}")
+    fi
+
+    local show_label show_remaining show_resets
+
+    if [ "$have_5h" = "true" ] && [ "$have_7d" = "false" ]; then
+        # Only 5h available
+        show_label="5h"
+        show_remaining="$five_hour_remaining"
+        show_resets="$five_hour_resets"
+    elif [ "$have_5h" = "false" ] && [ "$have_7d" = "true" ]; then
+        # Only 7d available
+        show_label="7d"
+        show_remaining="$seven_day_remaining"
+        show_resets="$seven_day_resets"
+    elif [ "$seven_day_remaining" -lt "$five_hour_remaining" ]; then
+        # 7d is more constrained
+        show_label="7d"
+        show_remaining="$seven_day_remaining"
+        show_resets="$seven_day_resets"
+    elif [ "$five_hour_remaining" -lt "$seven_day_remaining" ]; then
+        # 5h is more constrained
+        show_label="5h"
+        show_remaining="$five_hour_remaining"
+        show_resets="$five_hour_resets"
+    else
+        # Equal remaining: show whichever has longer reset time (harder constraint)
+        local five_reset_epoch seven_reset_epoch now_epoch
+        now_epoch=$(date +%s)
+        five_reset_epoch=$(date -d "$five_hour_resets" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${five_hour_resets%.*}" +%s 2>/dev/null || echo 0)
+        seven_reset_epoch=$(date -d "$seven_day_resets" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${seven_day_resets%.*}" +%s 2>/dev/null || echo 0)
+        if [ "$seven_reset_epoch" -ge "$five_reset_epoch" ]; then
+            show_label="7d"
+            show_remaining="$seven_day_remaining"
+            show_resets="$seven_day_resets"
+        else
+            show_label="5h"
+            show_remaining="$five_hour_remaining"
+            show_resets="$five_hour_resets"
+        fi
+    fi
+
+    local reset_fmt
+    reset_fmt=$(format_reset_time "$show_resets")
+    printf "(%2d%% %5s %s)" "$show_remaining" "$reset_fmt" "$show_label"
 }
 
 # Apply formatting
 MODEL_FMT=$(format_model "$MODEL")
 PCT_FMT=$(format_percentage "$USED_PCT")
-DUR_FMT=$(format_duration "$DURATION_MS")
 COST_FMT=$(format_cost "$COST_USD")
-INPUT_FMT=$(format_tokens $INPUT_TOKENS)
-OUTPUT_FMT=$(format_tokens $OUTPUT_TOKENS)
-TOTAL_FMT=$(format_tokens $TOTAL_TOKENS)
+UTIL_FMT=$(format_utilization "$SESSION_ID")
 PROJECT_FMT=$(format_project_dir "$PROJECT_DIR")
 
-# Output statusline: [Model]%/min/$usd/inK/outK/totK /path
-echo "[${MODEL_FMT}]${PCT_FMT}/${DUR_FMT}/${COST_FMT}/${INPUT_FMT}/${OUTPUT_FMT}/${TOTAL_FMT} ${PROJECT_FMT}"
+# Output statusline: [Model]%/$usd (remaining% reset label) parent/project
+echo "[${MODEL_FMT}]${PCT_FMT}/${COST_FMT} ${UTIL_FMT} ${PROJECT_FMT}"
 
 exit 0
 STATUSEOF

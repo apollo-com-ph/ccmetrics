@@ -36,8 +36,10 @@ ls ~/.claude/metrics_queue/ | wc -l       # Queue size
 
 ## Statusline
 
-Format: `[Model]%/min/$usd/inK/outK/totK /path`
-Example: `[Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/project`
+Format: `[Model]%/$usd (remaining% reset label) parent/project`
+Example: `[Sonnet 4.5]38%/$7.4 (72% 4h12m 5h) cc_workspace/ccmetrics`
+
+The parenthetical shows API utilization: remaining capacity %, time until reset, and which limit (5h or 7d). Displays whichever limit has lower remaining %; on tie, shows the one with longer reset time. Shows `(-- ----- --)` when OAuth data is unavailable.
 
 ## Database Schema
 
