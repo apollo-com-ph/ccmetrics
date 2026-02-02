@@ -19,6 +19,8 @@ All notable changes to this project will be documented in this file.
 - `client_type` field to database schema ("cli" or "vscode")
 - VS Code extension detection in `setup_ccmetrics.sh` with advisory about native UI limitations
 - VS Code extension detection in `verify_hooks.sh` with compatibility information
+- **Baseline delta approach for /clear handling:** Correctly computes per-session metrics when `/clear` is used by tracking cumulative values in project-scoped baseline files and computing deltas
+- **Statusline cost reset after /clear:** Cost display now resets to $0.0 after `/clear` by applying the same baseline delta logic as SessionEnd hook
 
 ### Changed
 - Increased SessionEnd hook timeout from 15s to 20s to accommodate retry logic
@@ -29,6 +31,12 @@ All notable changes to this project will be documented in this file.
 - OAuth API failures when Claude Code session is left idle overnight (token expires after ~4 hours)
 - Null utilization fields and `claude_account_email` in database when token is stale
 - Documentation inconsistencies: added missing schema columns (`five_hour_utilization`, `five_hour_resets_at`, `seven_day_sonnet_utilization`, `seven_day_sonnet_resets_at`) to README.md
+- **Critical: /clear double-counting bug fixed** - Previous segment-snapshotting approach created orphaned files and caused cumulative metrics to be double-counted. New baseline delta approach correctly computes per-session costs by subtracting baseline values from cumulative totals.
+- **Critical: SessionEnd hook crash on unbound variables** - Fixed silent crash in CLI mode caused by `set -euo pipefail` aborting when `$VSCODE_PID` or `$TERM_PROGRAM` are unset. Now uses defensive parameter expansion `${VSCODE_PID:-}` to prevent script termination. This bug caused ALL session metrics to be lost since commit cb15426.
+- **Critical: /clear double-counting on failed send** - Baseline management now happens before Supabase send, not after. Previously, if a send failed during /clear, the baseline wasn't updated, causing the next session to include the failed segment's metrics plus the queued retry, resulting in double-counting.
+- **Bug: Empty payload skip bypasses baseline management** - Empty payloads during /clear now save the baseline before exiting, preventing /clear chain breakage when a session has no meaningful metrics.
+- **Minor: Non-atomic baseline write** - Baseline files now use atomic tmp+mv pattern matching statusline hook, preventing partial writes on process termination.
+- **Docs: CLAUDE.md stale OAuth cache reference** - Fixed OAuth cache filename from `{session_id}_oauth.json` to `_oauth_cache.json` to match implementation.
 
 ## [1.0.0] - 2026-01-28
 
