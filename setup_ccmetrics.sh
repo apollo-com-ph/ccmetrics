@@ -433,7 +433,13 @@ touch "$LOG_FILE"
 # ============================================================================
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SESSION_END] $1" >> "$LOG_FILE"
+}
+
+debug_log() {
+    if [ "$DEBUG_ENABLED" = "true" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SESSION_END] DEBUG $1" >> "$LOG_FILE"
+    fi
 }
 
 # ============================================================================
@@ -446,6 +452,7 @@ CONFIG_FILE="$HOME/.claude/.ccmetrics-config.json"
 DEVELOPER_EMAIL="$USER"
 SUPABASE_URL=""
 SUPABASE_KEY=""
+DEBUG_ENABLED="false"
 
 if [ -f "$CONFIG_FILE" ]; then
     # Read all config values
@@ -456,27 +463,19 @@ if [ -f "$CONFIG_FILE" ]; then
 
     # Validate critical fields
     if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
-        log "❌ ERROR: Missing Supabase credentials in config file"
+        log "ERROR ❌ Missing Supabase credentials in config file"
         exit 1
     fi
 
     # Email can fallback to $USER if missing
     if [ -z "$DEVELOPER_EMAIL" ]; then
         DEVELOPER_EMAIL="$USER"
-        log "⚠️  Failed to read email from config, using \$USER: $USER"
+        log "WARN  ⚠️  Failed to read email from config, using \$USER: $USER"
     fi
 else
-    log "❌ ERROR: Config file not found at $CONFIG_FILE"
+    log "ERROR ❌ Config file not found at $CONFIG_FILE"
     exit 1
 fi
-
-# Debug logging support
-DEBUG_LOG="$HOME/.claude/ccmetrics_debug.log"
-debug_log() {
-    if [ "$DEBUG_ENABLED" = "true" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SESSION_END] $1" >> "$DEBUG_LOG"
-    fi
-}
 
 # Queue a failed payload for retry
 queue_payload() {
@@ -484,12 +483,12 @@ queue_payload() {
     local queue_file="${QUEUE_DIR}/$(date +%s)_$(uuidgen 2>/dev/null || echo $RANDOM).json"
 
     echo "$payload" > "$queue_file"
-    log "⏳ Queued payload to: $queue_file"
+    log "INFO  ⏳ Queued payload to $queue_file"
 
     # Cleanup old queue if too large
     local queue_count=$(ls -1 "$QUEUE_DIR" 2>/dev/null | wc -l)
     if [ "$queue_count" -gt "$MAX_QUEUE_SIZE" ]; then
-        log "⚠️  Queue size exceeded $MAX_QUEUE_SIZE, removing oldest entries"
+        log "WARN  ⚠️  Queue size exceeded $MAX_QUEUE_SIZE, removing oldest entries"
         ls -1t "$QUEUE_DIR" | tail -n +$((MAX_QUEUE_SIZE + 1)) | xargs -I {} rm -f "$QUEUE_DIR/{}"
     fi
 }
@@ -524,7 +523,7 @@ check_token_expiry() {
         # Token is expired - log how long ago
         local diff_seconds=$((current_time - expires_epoch))
         local diff_hours=$(awk "BEGIN {printf \"%.1f\", $diff_seconds / 3600}")
-        log "⚠️  OAuth token expired ${diff_hours}h ago (session was idle). Usage/profile data will use cached fallback."
+        log "WARN  ⚠️  OAuth token expired ${diff_hours}h ago (session was idle), will use cached fallback"
         return 1
     fi
 
@@ -558,7 +557,7 @@ oauth_api_call() {
 
         # Auth errors won't benefit from retry
         if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
-            log "⚠️  Failed to fetch $description: HTTP $http_code (auth error, skipping retry)"
+            log "WARN  ⚠️  Failed to fetch $description: HTTP $http_code (auth error, skipping retry)"
             return 1
         fi
 
@@ -567,7 +566,7 @@ oauth_api_call() {
             debug_log "Retrying $description after HTTP $http_code..."
             sleep 1
         else
-            log "⚠️  Failed to fetch $description: HTTP $http_code (after retry)"
+            log "WARN  ⚠️  Failed to fetch $description: HTTP $http_code (after retry)"
             return 1
         fi
     done
@@ -592,10 +591,10 @@ send_to_supabase() {
     local http_code=$(echo "$response" | tail -n1)
     
     if [ "$http_code" = "201" ]; then
-        log "✓ Session $session_id sent successfully (HTTP 201)"
+        log "INFO  ✓ Session $session_id sent successfully (HTTP 201)"
         return 0
     else
-        log "✗ Failed to send session $session_id (HTTP $http_code)"
+        log "ERROR ✗ Failed to send session $session_id (HTTP $http_code)"
         return 1
     fi
 }
@@ -608,7 +607,7 @@ process_queue() {
         return 0
     fi
     
-    log "📤 Processing $(echo "$queue_files" | wc -l) queued payloads..."
+    log "INFO  📤 Processing $(echo "$queue_files" | wc -l) queued payloads"
     
     while IFS= read -r file; do
         local queue_file="${QUEUE_DIR}/${file}"
@@ -621,9 +620,9 @@ process_queue() {
         
         if send_to_supabase "$payload"; then
             rm -f "$queue_file"
-            log "✓ Removed $file from queue"
+            log "INFO  ✓ Removed $file from queue"
         else
-            log "⏳ Keeping $file in queue for next retry"
+            log "WARN  ⏳ Keeping $file in queue for next retry"
             break
         fi
         
@@ -637,7 +636,7 @@ process_queue() {
 
 # Check if this is a SessionStart hook call (for processing queue)
 if [ "${HOOK_EVENT:-}" = "SessionStart" ]; then
-    log "🔄 SessionStart detected - processing queue"
+    log "INFO  🔄 SessionStart detected, processing queue"
     # Clean up stale cache files older than 30 days
     find "$METRICS_CACHE_DIR" -name "*.json" -mtime +30 -delete 2>/dev/null || true
     # Clean up legacy per-session OAuth files (migrated to _oauth_cache.json)
@@ -652,7 +651,7 @@ debug_log "raw stdin: $SESSION_DATA"
 
 # Validate we have session data
 if [ -z "$SESSION_DATA" ] || [ "$SESSION_DATA" = "{}" ]; then
-    log "⚠️  No session data received, skipping"
+    log "WARN  ⚠️  No session data received, skipping"
     exit 0
 fi
 
@@ -673,7 +672,7 @@ REASON=$(echo "$SESSION_DATA" | jq -r '.reason // ""')
 
 if [ "$REASON" = "clear" ]; then
     debug_log "CLEAR EVENT DETECTED: reason=$REASON (will use baseline delta)"
-    log "🔄 CLEAR detected for session $SESSION_ID"
+    log "INFO  🔄 CLEAR detected for session $SESSION_ID (project_hash=$(echo -n "$PROJECT_DIR" | md5sum | cut -c1-8))"
 fi
 
 # ============================================================================
@@ -700,7 +699,7 @@ METRICS_SOURCE="none"
 
 # Try cache first
 if [ -f "$CACHE_FILE" ]; then
-    log "📂 Reading cached metrics for session $SESSION_ID"
+    log "INFO  📂 Reading cached metrics for session $SESSION_ID"
     CACHED_DATA=$(cat "$CACHE_FILE")
 
     # Validate cache structure before using (check non-empty and has .model field)
@@ -717,7 +716,7 @@ if [ -f "$CACHE_FILE" ]; then
         CONTEXT_PERCENT=$(extract_metric "$CACHED_DATA" '.context_window.used_percentage' '0')
         debug_log "extracted from cache: model=$MODEL cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS context_pct=$CONTEXT_PERCENT"
     else
-        log "⚠️  Cache file invalid/empty for session $SESSION_ID, trying stdin fallback"
+        log "WARN  ⚠️  Cache file invalid/empty for session $SESSION_ID, trying stdin fallback"
         CACHED_DATA=""
     fi
 
@@ -727,7 +726,7 @@ fi
 
 # Fallback to stdin if cache failed or didn't exist
 if [ "$METRICS_SOURCE" = "none" ]; then
-    log "📂 Extracting metrics from stdin (cache unavailable)"
+    log "INFO  📂 Extracting metrics from stdin (cache unavailable)"
     METRICS_SOURCE="stdin"
 
     MODEL=$(extract_metric "$SESSION_DATA" '.model.display_name // .model.id' 'unknown')
@@ -774,7 +773,7 @@ if [ -f "$BASELINE_FILE" ]; then
 
     # Edge case: if baseline > current, treat as stale (Claude Code restarted)
     if [ "$(awk "BEGIN {print ($BASELINE_COST > $CUMULATIVE_COST || $BASELINE_INPUT > $CUMULATIVE_INPUT) ? 1 : 0}")" -eq 1 ]; then
-        log "⚠️  Stale baseline detected (baseline > current), treating as first session"
+        log "WARN  ⚠️  Stale baseline detected (baseline > current), treating as first session"
         debug_log "Deleting stale baseline file: $BASELINE_FILE"
         rm -f "$BASELINE_FILE"
     else
@@ -784,7 +783,7 @@ if [ -f "$BASELINE_FILE" ]; then
         INPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_INPUT - $BASELINE_INPUT}")
         OUTPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_OUTPUT - $BASELINE_OUTPUT}")
 
-        log "📊 Delta computed: cost=\$$TOTAL_COST (baseline: \$$BASELINE_COST), tokens=$INPUT_TOKENS+$OUTPUT_TOKENS"
+        log "INFO  📊 Delta computed: cost=\$$TOTAL_COST (cumulative=\$$CUMULATIVE_COST - baseline=\$$BASELINE_COST), duration=${DURATION_MS}ms, tokens=${INPUT_TOKENS}in+${OUTPUT_TOKENS}out"
         debug_log "Delta values: cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS"
     fi
 else
@@ -813,14 +812,19 @@ if [ "$REASON" = "clear" ]; then
         input_tokens: ($input | tonumber),
         output_tokens: ($output | tonumber),
         saved_at: $saved_at
-      }' > "$BASELINE_TMP" && mv -f "$BASELINE_TMP" "$BASELINE_FILE"
-    log "💾 Saved baseline for next session: cost=\$$CUMULATIVE_COST, tokens=$CUMULATIVE_INPUT+$CUMULATIVE_OUTPUT"
+      }' > "$BASELINE_TMP"
+    if [ -s "$BASELINE_TMP" ] && mv -f "$BASELINE_TMP" "$BASELINE_FILE" 2>/dev/null; then
+        log "INFO  💾 Saved baseline for next session: cost=\$$CUMULATIVE_COST, tokens=${CUMULATIVE_INPUT}in+${CUMULATIVE_OUTPUT}out"
+    else
+        log "ERROR ❌ Failed to save baseline file: $BASELINE_FILE"
+        rm -f "$BASELINE_TMP"
+    fi
     debug_log "Baseline saved to: $BASELINE_FILE"
 else
     # Normal exit: delete baseline file (chain is over)
     if [ -f "$BASELINE_FILE" ]; then
         rm -f "$BASELINE_FILE"
-        log "🗑️  Deleted baseline file (session chain ended)"
+        log "INFO  🗑️  Deleted baseline file (session chain ended)"
         debug_log "Baseline file removed: $BASELINE_FILE"
     fi
 fi
@@ -872,11 +876,11 @@ if [ -f "$CREDENTIALS_FILE" ]; then
                     SEVEN_DAY_SONNET_UTIL=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.utilization // "null"')
                     SEVEN_DAY_SONNET_RESETS=$(echo "$USAGE_RESPONSE" | jq -r '.seven_day_sonnet.resets_at // "null"')
                     debug_log "Full usage API response: $USAGE_RESPONSE"
-                    log "📈 Usage fetched: 7-day utilization ${SEVEN_DAY_UTIL}%"
+                    log "INFO  📈 Usage fetched: 7d=${SEVEN_DAY_UTIL}%, 5h=${FIVE_HOUR_UTIL}%, 7d_sonnet=${SEVEN_DAY_SONNET_UTIL}%"
                 else
                     if echo "$USAGE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
                         USAGE_ERR=$(echo "$USAGE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
-                        log "⚠️  Failed to fetch usage data: $USAGE_ERR (HTTP $USAGE_HTTP_CODE)"
+                        log "WARN  ⚠️  Failed to fetch usage data: $USAGE_ERR (HTTP $USAGE_HTTP_CODE)"
                     fi
                 fi
             fi
@@ -889,11 +893,11 @@ if [ -f "$CREDENTIALS_FILE" ]; then
 
                 if [ -n "$PROFILE_RESPONSE" ] && ! echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
                     CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
-                    log "👤 Claude account: ${CLAUDE_ACCOUNT_EMAIL}"
+                    log "INFO  👤 Claude account: ${CLAUDE_ACCOUNT_EMAIL}"
                 else
                     if echo "$PROFILE_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
                         PROFILE_ERR=$(echo "$PROFILE_RESPONSE" | jq -r '.error.message // .error // "unknown error"')
-                        log "⚠️  Failed to fetch profile data: $PROFILE_ERR (HTTP $PROFILE_HTTP_CODE)"
+                        log "WARN  ⚠️  Failed to fetch profile data: $PROFILE_ERR (HTTP $PROFILE_HTTP_CODE)"
                     fi
                 fi
             fi
@@ -908,7 +912,7 @@ fi
 # If utilization fields are still null, check for cached OAuth data from statusline
 OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/_oauth_cache.json"
 if [[ "$SEVEN_DAY_UTIL" == "null" || -z "$CLAUDE_ACCOUNT_EMAIL" ]] && [ -f "$OAUTH_CACHE_FILE" ]; then
-    log "📂 Using cached OAuth data from statusline hook"
+    log "INFO  📂 Using cached OAuth data from statusline hook"
     CACHED_OAUTH=$(cat "$OAUTH_CACHE_FILE")
 
     # Calculate cache age
@@ -916,7 +920,7 @@ if [[ "$SEVEN_DAY_UTIL" == "null" || -z "$CLAUDE_ACCOUNT_EMAIL" ]] && [ -f "$OAU
     if [ "$CACHED_AT" -gt 0 ]; then
         CACHE_AGE_SEC=$(($(date +%s) - CACHED_AT))
         CACHE_AGE_MIN=$(awk "BEGIN {printf \"%.1f\", $CACHE_AGE_SEC / 60}")
-        log "📅 Cache age: ${CACHE_AGE_MIN} minutes"
+        log "INFO  📅 OAuth cache age: ${CACHE_AGE_MIN} minutes"
     fi
 
     # Use cached values if current ones are null
@@ -1011,7 +1015,6 @@ PAYLOAD=$(jq -n \
     metrics_source: $metrics_source,
     client_type: $client_type
   }')
-debug_log "payload context_usage_percent=$(echo "$PAYLOAD" | jq -r '.context_usage_percent' 2>/dev/null)"
 
 # ============================================================================
 # SKIP EMPTY PAYLOADS
@@ -1020,7 +1023,7 @@ debug_log "payload context_usage_percent=$(echo "$PAYLOAD" | jq -r '.context_usa
 # Skip if no meaningful metrics (no tokens, no cost, unknown model)
 if [[ "$INPUT_TOKENS" -eq 0 && "$OUTPUT_TOKENS" -eq 0 && "$MODEL" == "unknown" ]]; then
     if [ "$(awk "BEGIN {print ($TOTAL_COST == 0) ? 1 : 0}")" -eq 1 ]; then
-        log "⏭️  Skipping empty payload for session $SESSION_ID (source: $METRICS_SOURCE) - no meaningful metrics (0 tokens, \$0 cost, unknown model)"
+        log "INFO  ⏭️  Skipping empty payload for session $SESSION_ID (source=$METRICS_SOURCE) - no meaningful metrics (0 tokens, \$0 cost, unknown model)"
         exit 0
     fi
 fi
@@ -1029,8 +1032,8 @@ fi
 # SEND TO SUPABASE (WITH QUEUE ON FAILURE)
 # ============================================================================
 
-log "📊 Processing session: $SESSION_ID"
-log "📤 Payload: $PAYLOAD"
+log "INFO  📊 Processing session $SESSION_ID (model=$MODEL, source=$METRICS_SOURCE, reason=${REASON:-normal}, client=$CLIENT_TYPE, cost=\$$TOTAL_COST, tokens=${INPUT_TOKENS}in+${OUTPUT_TOKENS}out)"
+debug_log "📤 Full payload: $PAYLOAD"
 
 if send_to_supabase "$PAYLOAD"; then
     process_queue
@@ -1088,16 +1091,19 @@ mkdir -p "$METRICS_CACHE_DIR"
 # Read session data from stdin
 INPUT=$(cat)
 
-# Debug mode support
+# Logging support
+LOG_FILE="$HOME/.claude/ccmetrics.log"
 DEBUG_ENABLED=false
 CONFIG_FILE="$HOME/.claude/.ccmetrics-config.json"
 if [ -f "$CONFIG_FILE" ]; then
     DEBUG_ENABLED=$(jq -r '.debug // false' "$CONFIG_FILE" 2>/dev/null || echo "false")
 fi
-DEBUG_LOG="$HOME/.claude/ccmetrics_debug.log"
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STATUSLINE] $1" >> "$LOG_FILE"
+}
 debug_log() {
     if [ "$DEBUG_ENABLED" = "true" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STATUSLINE] $1" >> "$DEBUG_LOG"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STATUSLINE] DEBUG $1" >> "$LOG_FILE"
     fi
 }
 debug_log "raw stdin: $INPUT"
@@ -1119,18 +1125,27 @@ if [ -n "$SESSION_ID" ]; then
             debug_log "HIGH-WATERMARK: incoming is 0, keeping old=$OLD_PCT"
             echo "$INPUT" | jq --argjson old_pct "$OLD_PCT" '.context_window.used_percentage = $old_pct' > "$CACHE_TMP"
             if [ -s "$CACHE_TMP" ]; then
-                mv -f "$CACHE_TMP" "$CACHE_FILE"
+                if ! mv -f "$CACHE_TMP" "$CACHE_FILE" 2>/dev/null; then
+                    log "ERROR ❌ Failed to write cache file: $CACHE_FILE"
+                    rm -f "$CACHE_TMP"
+                fi
             else
                 rm -f "$CACHE_TMP"
             fi
         else
             debug_log "writing incoming=$INCOMING_PCT (non-zero, overwriting old=$OLD_PCT)"
-            echo "$INPUT" > "$CACHE_TMP" && mv -f "$CACHE_TMP" "$CACHE_FILE"
+            if ! (echo "$INPUT" > "$CACHE_TMP" && mv -f "$CACHE_TMP" "$CACHE_FILE") 2>/dev/null; then
+                log "ERROR ❌ Failed to write cache file: $CACHE_FILE"
+                rm -f "$CACHE_TMP"
+            fi
         fi
     else
         debug_log "no existing cache, writing incoming=$INCOMING_PCT"
         CACHE_TMP="${CACHE_FILE}.tmp.$$"
-        echo "$INPUT" > "$CACHE_TMP" && mv -f "$CACHE_TMP" "$CACHE_FILE"
+        if ! (echo "$INPUT" > "$CACHE_TMP" && mv -f "$CACHE_TMP" "$CACHE_FILE") 2>/dev/null; then
+            log "ERROR ❌ Failed to write cache file: $CACHE_FILE"
+            rm -f "$CACHE_TMP"
+        fi
     fi
 fi
 
@@ -1155,14 +1170,18 @@ fi
         exit 0
     fi
 
+    debug_log "OAuth background fetch: starting (last_fetch=${TIME_SINCE_FETCH}s ago)"
+
     # Check token expiry
     CREDENTIALS_FILE="$HOME/.claude/.credentials.json"
     if [ ! -f "$CREDENTIALS_FILE" ]; then
+        debug_log "OAuth background fetch: no credentials file, skipping"
         exit 0
     fi
 
     EXPIRES_AT=$(jq -r '.claudeAiOauth.expiresAt // empty' "$CREDENTIALS_FILE" 2>/dev/null)
     if [ -z "$EXPIRES_AT" ]; then
+        debug_log "OAuth background fetch: no expiresAt in credentials, skipping"
         exit 0
     fi
 
@@ -1172,12 +1191,14 @@ fi
         EXPIRES_EPOCH=$(date -d "$EXPIRES_AT" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${EXPIRES_AT%.*}" +%s 2>/dev/null || echo 0)
     fi
     if [ "$EXPIRES_EPOCH" -eq 0 ] || [ "$CURRENT_TIME" -ge "$EXPIRES_EPOCH" ]; then
+        debug_log "OAuth background fetch: token expired, skipping"
         exit 0
     fi
 
     # Token is valid, fetch OAuth data
     ACCESS_TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CREDENTIALS_FILE" 2>/dev/null)
     if [ -z "$ACCESS_TOKEN" ]; then
+        debug_log "OAuth background fetch: no access token, skipping"
         exit 0
     fi
 
@@ -1222,6 +1243,13 @@ fi
         CLAUDE_ACCOUNT_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.account.email // ""')
     fi
 
+    # Log fetch results
+    if [ "$USAGE_HTTP_CODE" = "200" ] && [ "$PROFILE_HTTP_CODE" = "200" ]; then
+        debug_log "OAuth background fetch: success (7d=${SEVEN_DAY_UTIL}%, 5h=${FIVE_HOUR_UTIL}%, email=${CLAUDE_ACCOUNT_EMAIL:-empty})"
+    else
+        log "WARN  ⚠️  OAuth background fetch: usage HTTP $USAGE_HTTP_CODE, profile HTTP $PROFILE_HTTP_CODE"
+    fi
+
     # Write cache atomically
     OAUTH_CACHE_TMP="${OAUTH_CACHE_FILE}.tmp.$$"
     jq -n \
@@ -1244,8 +1272,12 @@ fi
             claude_account_email: (if $claude_account == "" then null else $claude_account end)
         }' > "$OAUTH_CACHE_TMP" 2>/dev/null
     if [ -s "$OAUTH_CACHE_TMP" ]; then
-        mv -f "$OAUTH_CACHE_TMP" "$OAUTH_CACHE_FILE"
+        if ! mv -f "$OAUTH_CACHE_TMP" "$OAUTH_CACHE_FILE" 2>/dev/null; then
+            log "ERROR ❌ OAuth background fetch: failed to write cache file"
+            rm -f "$OAUTH_CACHE_TMP"
+        fi
     else
+        log "ERROR ❌ OAuth background fetch: failed to generate cache JSON"
         rm -f "$OAUTH_CACHE_TMP"
     fi
 ) &

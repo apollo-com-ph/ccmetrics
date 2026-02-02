@@ -17,6 +17,8 @@ See `README.md` for user-facing install, usage, and troubleshooting docs.
 
 **Config** (`~/.claude/.ccmetrics-config.json`): `developer_email`, `supabase_url`, `supabase_key`, `created_at` (ISO timestamp), `debug` (boolean, default false)
 
+**Logging** (`~/.claude/ccmetrics.log`): Single unified log file for both regular and debug entries. All entries include a module tag (`[SESSION_END]` or `[STATUSLINE]`) and a log level (`INFO`, `WARN`, `ERROR`, or `DEBUG`). Debug entries (level `DEBUG`) only appear when `debug=true` in config. Format: `[YYYY-MM-DD HH:MM:SS] [MODULE] LEVEL message`
+
 **Data flow:**
 - Statusline caches metrics to `{session_id}.json` → runs background OAuth fetch every 5min (usage/profile) → caches to `_oauth_cache.json`
 - **/clear handling:** When `/clear` is used, Claude Code fires `SessionEnd(reason=clear)` then creates a new session with a new `session_id`. Cumulative metrics (cost, tokens, duration) carry over to the new session. SessionEnd hook uses a **baseline delta approach** to compute per-session values:
@@ -30,9 +32,12 @@ See `README.md` for user-facing install, usage, and troubleshooting docs.
 ## Commands
 
 ```bash
-bash setup_ccmetrics.sh                   # Install
-tail -f ~/.claude/ccmetrics.log           # Check logs
-ls ~/.claude/metrics_queue/ | wc -l       # Queue size
+bash setup_ccmetrics.sh                                    # Install
+tail -f ~/.claude/ccmetrics.log                            # Check logs (all levels)
+grep '\[SESSION_END\]' ~/.claude/ccmetrics.log             # Filter by module
+grep 'ERROR\|WARN' ~/.claude/ccmetrics.log                 # Errors and warnings only
+grep 'DEBUG' ~/.claude/ccmetrics.log                       # Debug entries only (requires debug=true)
+ls ~/.claude/metrics_queue/ | wc -l                        # Queue size
 ```
 
 ## Dependencies
