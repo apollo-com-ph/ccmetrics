@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hook-based system that collects Claude Code session metadata (cost, duration, tokens) and stores it in Supabase. Privacy-first: only metadata, never conversation content or code.
 
+See `README.md` for user-facing install, usage, and troubleshooting docs.
+
 ## Architecture
 
 **Hooks** (in `~/.claude/hooks/`):
