@@ -103,40 +103,37 @@ Once installed, metrics are collected automatically:
 
 Empty payloads (0 tokens, $0 cost, unknown model) are automatically skipped to avoid cluttering the database.
 
-## VS Code Extension Compatibility
+## Using with the VS Code Claude Code Extension
 
-The ccmetrics hooks work with the VS Code Claude Code extension, with some differences between native UI mode and terminal mode:
+If you use Claude Code through the VS Code extension instead of the CLI, follow these steps:
 
-### Native UI Mode (Default)
+### Setup
 
-**What works:**
-- ✓ Session metrics collection (SessionEnd hook)
-- ✓ Cost, duration, tokens, and model tracking
-- ✓ OAuth data (utilization %, account email)
-- ✓ Automatic Supabase submission
-- ✓ Queue retry mechanism
-
-**Limitations:**
-- ✗ Statusline display not visible (VS Code extension limitation)
-- ⚠️ Context usage % reflects final value, not peak (statusline doesn't run to cache peak value)
-
-The SessionEnd hook has a built-in stdin fallback that extracts metrics directly from the session transcript when no statusline cache is available, so **data collection works normally in VS Code native UI mode**.
-
-### Terminal Mode (Full Feature Parity)
-
-To enable the statusline display and peak context tracking in VS Code:
-
-1. Add to your VS Code `settings.json`:
-   ```json
-   "claudeCode.useTerminal": true
+1. Open a terminal (VS Code's integrated terminal or any external terminal)
+2. Run the same install command:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh -o /tmp/setup_ccmetrics.sh && bash /tmp/setup_ccmetrics.sh && rm /tmp/setup_ccmetrics.sh
    ```
-2. Reload VS Code
+3. Enter your Supabase URL, API key, and work email when prompted
+4. That's it. Metrics are collected automatically when you use Claude Code in VS Code.
 
-Terminal mode provides the same experience as the CLI, including real-time statusline updates.
+### What works out of the box
 
-### Detection
+- Session metrics (cost, duration, tokens, model) -- collected automatically
+- Utilization data (7-day %, 5-hour %) -- collected automatically
+- Failed sends are queued and retried -- works automatically
 
-The `setup_ccmetrics.sh` and `verify_hooks.sh` scripts automatically detect the VS Code extension and display compatibility information.
+### Statusline not showing?
+
+The VS Code native UI mode does not display the statusline. Your metrics are still being collected and sent -- you just won't see the real-time `[Sonnet 4.5]28%/0012/$1.2/...` display.
+
+If you want the statusline, switch to terminal mode by adding this to your VS Code `settings.json` (Ctrl/Cmd+Shift+P → "Preferences: Open User Settings (JSON)"):
+
+```json
+"claudeCode.useTerminal": true
+```
+
+Then reload VS Code. Terminal mode gives you the same experience as the CLI, including the statusline.
 
 ## Statusline Display
 
