@@ -58,19 +58,11 @@ Note: `awk` and `curl` are pre-installed on most Unix systems.
 
 ### 1. Create Supabase Project
 
-1. Go to [supabase.com](https://supabase.com)
-2. Create new project (free tier)
-3. Follow the complete setup instructions in `SUPABASE_SETUP.md` to create the `sessions` table with proper RLS policies
-4. Get credentials from Settings → API:
-   - Project URL
-   - Publishable key (starts with `sb_publishable_`) or legacy `anon` public key
+Follow [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md) to create the project, `sessions` table, and RLS policies. You'll need your Project URL and API key for step 2.
 
 ### 2. Run Setup Script
-```bash
-curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh -o /tmp/setup_ccmetrics.sh && bash /tmp/setup_ccmetrics.sh && rm /tmp/setup_ccmetrics.sh
-```
 
-Enter your Supabase URL, API key, and work email when prompted.
+Run the Quick Install command above, then enter your Supabase URL, API key, and work email when prompted.
 
 #### Setup Options
 
@@ -113,64 +105,12 @@ Empty payloads (0 tokens, $0 cost, unknown model) are automatically skipped to a
 
 ## Statusline Display
 
-The setup script installs a custom statusline that shows comprehensive session metrics in a compact format:
-- Model name (10 chars, padded)
-- Context usage percentage (2 digits)
-- Duration in minutes (4 digits)
-- Cost in USD (4 chars)
-- Token counts: input/output/total (4 chars each)
-- Full project path (truncated if terminal too narrow)
-
-Example output:
+Format: `[Model]%/min/$usd/inK/outK/totK /path`
 ```
 [Sonnet 4.5]28%/0012/$1.2/ 45K/ 12K/ 57K /home/user/projects/myapp
 ```
 
-Format breakdown:
-- `[Sonnet 4.5]` - Model name (10 chars max)
-- `28%` - Context usage (00-99%)
-- `0012` - Duration (0001-9999 minutes)
-- `$1.2` - Cost ($0.0-$999)
-- `45K` - Input tokens (0-999 or X.XK-999K)
-- `12K` - Output tokens (0-999 or X.XK-999K)
-- `57K` - Total tokens (0-999 or X.XK-999K)
-- `/home/user/projects/myapp` - Project directory
-
-### Customizing the Statusline
-
-Edit `~/.claude/hooks/ccmetrics_statusline.sh` to customize the display format. The script receives session data as JSON via stdin and can access:
-
-- **Model**: `.model.display_name` or `.model.id`
-- **Tokens**: `.context_window.total_input_tokens`, `.context_window.total_output_tokens`
-- **Context %**: `.context_window.used_percentage`
-- **Cost**: `.cost.total_cost_usd`
-- **Duration**: `.cost.total_duration_ms`
-- **Project Path**: `.workspace.project_dir`
-
-The script includes formatting functions:
-- `format_model()` - 10 char model name, right padded
-- `format_percentage()` - 2 digit percentage with zero padding
-- `format_duration()` - 4 digit minutes with zero padding
-- `format_cost()` - 4 char cost display ($0.0 to $999)
-- `format_tokens()` - 4 char token display (0 to 999K)
-- `format_project_dir()` - Truncates from left if too long
-
-Example customizations:
-
-**Remove project path:**
-```bash
-echo "[${MODEL_FMT}]${PCT_FMT}/${DUR_FMT}/${COST_FMT}/${INPUT_FMT}/${OUTPUT_FMT}/${TOTAL_FMT}"
-```
-
-**Show only percentage and tokens:**
-```bash
-echo "[${MODEL_FMT}]${PCT_FMT}/${TOTAL_FMT}"
-```
-
-**Add custom labels:**
-```bash
-echo "[${MODEL_FMT}] ${PCT_FMT} context | ${DUR_FMT}m | ${COST_FMT} | ${TOTAL_FMT} tokens"
-```
+To customize, edit `~/.claude/hooks/ccmetrics_statusline.sh` -- see comments in the script for available fields and formatting functions.
 
 ## Monitoring
 
@@ -187,25 +127,8 @@ tail -20 ~/.claude/ccmetrics.log
 ```
 
 ### Query Data in Supabase
-```sql
--- Total cost by developer
-SELECT 
-  developer,
-  COUNT(*) as sessions,
-  SUM(cost_usd) as total_cost
-FROM sessions
-GROUP BY developer;
 
--- Last 7 days activity
-SELECT 
-  DATE(created_at) as date,
-  developer,
-  COUNT(*) as sessions
-FROM sessions
-WHERE created_at > NOW() - INTERVAL '7 days'
-GROUP BY date, developer
-ORDER BY date DESC;
-```
+See [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md#useful-sql-queries) for example queries.
 
 ## Files Created
 ```
@@ -247,15 +170,11 @@ echo '{}' | ~/.claude/hooks/send_claude_metrics.sh
 # Check logs
 tail -20 ~/.claude/ccmetrics.log
 
-# Verify Supabase connection (reads from config file)
-SUPABASE_URL=$(jq -r '.supabase_url' ~/.claude/.ccmetrics-config.json)
-SUPABASE_KEY=$(jq -r '.supabase_key' ~/.claude/.ccmetrics-config.json)
-curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
-  -H "apikey: ${SUPABASE_KEY}"
-
 # Check queue
 ls ~/.claude/metrics_queue/
 ```
+
+See [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md#step-6-test-connection) for connection test commands.
 
 ### OAuth token expired / idle sessions
 
@@ -275,18 +194,8 @@ tail -f ~/.claude/ccmetrics.log
 The cached data is automatically cleaned up and has minimal performance impact (runs in background, never blocks statusline rendering).
 
 ### Disable monitoring
-```bash
-# Uninstall ccmetrics hooks (preserves other settings)
-bash setup_ccmetrics.sh --uninstall
 
-# Preview what would be removed
-bash setup_ccmetrics.sh --uninstall --dry-run
-
-# Or manually delete hook scripts
-rm ~/.claude/hooks/send_claude_metrics.sh
-rm ~/.claude/hooks/process_metrics_queue.sh
-rm ~/.claude/hooks/ccmetrics_statusline.sh
-```
+See [Setup Options](#setup-options) for `--uninstall` and `--dry-run` flags.
 
 ## Privacy & Compliance
 

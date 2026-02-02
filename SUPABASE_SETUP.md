@@ -79,54 +79,6 @@ CREATE POLICY "Allow insert for anon" ON sessions
 4. Click **Run** (or press Ctrl/Cmd + Enter)
 5. Verify success message appears
 
-### Option B: Using Table Editor (Manual)
-
-1. Go to **Table Editor** in left sidebar
-2. Click **New Table**
-3. Configure:
-   - **Name**: `sessions`
-   - **Description**: "Claude Code session metadata"
-   - **Enable RLS**: ON (recommended for security)
-
-4. Add columns:
-
-| Column Name | Type | Default | Nullable | Unique | Identity |
-|------------|------|---------|----------|--------|----------|
-| id | int8 | - | No | Yes | Yes (generated) |
-| created_at | timestamptz | now() | No | No | No |
-| session_id | text | - | No | No | No |
-| developer | text | - | No | No | No |
-| hostname | text | - | Yes | No | No |
-| project_path | text | - | Yes | No | No |
-| duration_minutes | numeric | - | Yes | No | No |
-| cost_usd | numeric | - | Yes | No | No |
-| input_tokens | int4 | - | Yes | No | No |
-| output_tokens | int4 | - | Yes | No | No |
-| message_count | int4 | - | Yes | No | No |
-| user_message_count | int4 | - | Yes | No | No |
-| tools_used | text | - | Yes | No | No |
-| context_usage_percent | numeric | - | Yes | No | No |
-| model | text | - | Yes | No | No |
-| seven_day_utilization | int4 | - | Yes | No | No |
-| seven_day_resets_at | timestamptz | - | Yes | No | No |
-| five_hour_utilization | int4 | - | Yes | No | No |
-| five_hour_resets_at | timestamptz | - | Yes | No | No |
-| seven_day_sonnet_utilization | int4 | - | Yes | No | No |
-| seven_day_sonnet_resets_at | timestamptz | - | Yes | No | No |
-| claude_account_email | text | - | Yes | No | No |
-
-5. Click **Save**
-
-6. **Create RLS Policy** (if RLS is enabled):
-   - Go to **SQL Editor** → **New query**
-   - Run:
-   ```sql
-   CREATE POLICY "Allow insert for anon" ON sessions
-     FOR INSERT
-     TO anon
-     WITH CHECK (true);
-   ```
-
 **Note:** The `developer` field stores the work email address entered during setup. The `claude_account_email` field stores the actual Anthropic account email (fetched automatically from OAuth).
 
 ## Step 5: Get API Credentials
@@ -270,4 +222,22 @@ This is expected behavior. With write-only RLS, the publishable key can only INS
 
 ## Useful SQL Queries
 
-See the [README.md](README.md#query-data-in-supabase) for example queries.
+```sql
+-- Total cost by developer
+SELECT
+  developer,
+  COUNT(*) as sessions,
+  SUM(cost_usd) as total_cost
+FROM sessions
+GROUP BY developer;
+
+-- Last 7 days activity
+SELECT
+  DATE(created_at) as date,
+  developer,
+  COUNT(*) as sessions
+FROM sessions
+WHERE created_at > NOW() - INTERVAL '7 days'
+GROUP BY date, developer
+ORDER BY date DESC;
+```
