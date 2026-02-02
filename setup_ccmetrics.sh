@@ -724,6 +724,12 @@ if [ "$METRICS_SOURCE" = "none" ]; then
     debug_log "extracted from stdin: model=$MODEL cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS context_pct=$CONTEXT_PERCENT"
 fi
 
+# Detect client type (CLI vs VS Code)
+CLIENT_TYPE="cli"
+if [ -n "$VSCODE_PID" ] || [ "$TERM_PROGRAM" = "vscode" ]; then
+    CLIENT_TYPE="vscode"
+fi
+
 # Calculate duration in minutes
 DURATION_MIN=$(awk "BEGIN {printf \"%.2f\", $DURATION_MS / 60000}" 2>/dev/null || echo "0")
 
@@ -888,6 +894,8 @@ PAYLOAD=$(jq -n \
   --argjson seven_day_sonnet_util "$SEVEN_DAY_SONNET_UTIL" \
   --arg seven_day_sonnet_resets "$SEVEN_DAY_SONNET_RESETS" \
   --arg claude_account "$CLAUDE_ACCOUNT_EMAIL" \
+  --arg metrics_source "$METRICS_SOURCE" \
+  --arg client_type "$CLIENT_TYPE" \
   '{
     session_id: $session_id,
     developer: $developer,
@@ -908,7 +916,9 @@ PAYLOAD=$(jq -n \
     five_hour_resets_at: (if $five_hour_resets == "null" then null else $five_hour_resets end),
     seven_day_sonnet_utilization: (if $seven_day_sonnet_util == null then null else ($seven_day_sonnet_util | floor) end),
     seven_day_sonnet_resets_at: (if $seven_day_sonnet_resets == "null" then null else $seven_day_sonnet_resets end),
-    claude_account_email: (if $claude_account == "" then null else $claude_account end)
+    claude_account_email: (if $claude_account == "" then null else $claude_account end),
+    metrics_source: $metrics_source,
+    client_type: $client_type
   }')
 debug_log "payload context_usage_percent=$(echo "$PAYLOAD" | jq -r '.context_usage_percent' 2>/dev/null)"
 
@@ -1639,6 +1649,34 @@ run_tests() {
     fi
 }
 
+# Function to detect VS Code extension and print advisory
+detect_vscode_extension() {
+    local vscode_ext_dirs=(
+        "$HOME/.vscode/extensions"
+        "$HOME/.vscode-server/extensions"
+    )
+
+    for ext_dir in "${vscode_ext_dirs[@]}"; do
+        if [ -d "$ext_dir" ]; then
+            if ls "$ext_dir"/anthropic.claude-code* >/dev/null 2>&1; then
+                echo ""
+                print_info "VS Code Extension Detected"
+                echo ""
+                print_warning "Note: VS Code native UI mode has limitations:"
+                echo "  • Session metrics are collected normally ✓"
+                echo "  • Statusline display is NOT available ✗"
+                echo ""
+                print_info "To enable full statusline support in VS Code:"
+                echo "  1. Add to VS Code settings.json:"
+                echo '     "claudeCode.useTerminal": true'
+                echo "  2. Reload VS Code"
+                echo ""
+                return 0
+            fi
+        fi
+    done
+}
+
 #############################################################################
 # MAIN INSTALLATION FLOW
 #############################################################################
@@ -1705,6 +1743,10 @@ main() {
             print_header
             echo -e "${GREEN}✓ Installation Complete!${NC}"
             echo ""
+
+            # Check for VS Code extension
+            detect_vscode_extension
+
             print_info "Next steps:"
             echo "  1. Start a new Claude Code session"
             echo "  2. The statusline will show real-time usage"
@@ -1728,6 +1770,10 @@ main() {
         print_header
         echo -e "${GREEN}✓ Installation Complete!${NC}"
         echo ""
+
+        # Check for VS Code extension
+        detect_vscode_extension
+
         print_info "Next steps:"
         echo "  1. Start a new Claude Code session"
         echo "  2. The statusline will show real-time usage"

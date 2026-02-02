@@ -57,7 +57,9 @@ CREATE TABLE sessions (
   five_hour_resets_at TIMESTAMPTZ,
   seven_day_sonnet_utilization INTEGER,
   seven_day_sonnet_resets_at TIMESTAMPTZ,
-  claude_account_email TEXT
+  claude_account_email TEXT,
+  metrics_source TEXT,
+  client_type TEXT
 );
 
 -- Create indexes for faster queries
