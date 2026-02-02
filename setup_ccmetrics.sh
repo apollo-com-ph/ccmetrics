@@ -640,6 +640,8 @@ if [ "${HOOK_EVENT:-}" = "SessionStart" ]; then
     log "🔄 SessionStart detected - processing queue"
     # Clean up stale cache files older than 30 days
     find "$METRICS_CACHE_DIR" -name "*.json" -mtime +30 -delete 2>/dev/null || true
+    # Clean up legacy per-session OAuth files (migrated to _oauth_cache.json)
+    find "$METRICS_CACHE_DIR" -name "*_oauth.json" ! -name "_oauth_cache.json" -delete 2>/dev/null || true
     process_queue
     exit 0
 fi
@@ -661,6 +663,18 @@ fi
 SESSION_ID=$(echo "$SESSION_DATA" | jq -r '.session_id // "unknown"')
 PROJECT_DIR=$(echo "$SESSION_DATA" | jq -r '.cwd // "unknown"')
 TRANSCRIPT_PATH=$(echo "$SESSION_DATA" | jq -r '.transcript_path // ""')
+REASON=$(echo "$SESSION_DATA" | jq -r '.reason // ""')
+
+# ============================================================================
+# DETECT /clear EVENTS
+# ============================================================================
+# When /clear is executed, SessionEnd runs with reason="clear"
+# We log it and continue to normal processing (baseline delta handles it)
+
+if [ "$REASON" = "clear" ]; then
+    debug_log "CLEAR EVENT DETECTED: reason=$REASON (will use baseline delta)"
+    log "🔄 CLEAR detected for session $SESSION_ID"
+fi
 
 # ============================================================================
 # EXTRACTION HELPER WITH FALLBACK
@@ -675,6 +689,7 @@ extract_metric() {
 
     echo "$data" | jq -r "$field // empty" 2>/dev/null || echo "$default"
 }
+
 
 # ============================================================================
 # READ CACHED METRICS FROM STATUSLINE HOOK
@@ -726,12 +741,89 @@ fi
 
 # Detect client type (CLI vs VS Code)
 CLIENT_TYPE="cli"
-if [ -n "$VSCODE_PID" ] || [ "$TERM_PROGRAM" = "vscode" ]; then
+if [ -n "${VSCODE_PID:-}" ] || [ "${TERM_PROGRAM:-}" = "vscode" ]; then
     CLIENT_TYPE="vscode"
 fi
 
-# Calculate duration in minutes
+# ============================================================================
+# BASELINE DELTA COMPUTATION FOR /clear HANDLING
+# ============================================================================
+
+# Compute project hash for baseline file scoping
+PROJECT_HASH=$(echo -n "$PROJECT_DIR" | md5sum | cut -c1-8)
+BASELINE_FILE="${METRICS_CACHE_DIR}/_clear_baseline_${PROJECT_HASH}.json"
+
+# Store original cumulative values (needed for baseline save on /clear)
+CUMULATIVE_COST="$TOTAL_COST"
+CUMULATIVE_DURATION_MS="$DURATION_MS"
+CUMULATIVE_INPUT="$INPUT_TOKENS"
+CUMULATIVE_OUTPUT="$OUTPUT_TOKENS"
+
+# If baseline exists, compute delta (per-session values)
+if [ -f "$BASELINE_FILE" ]; then
+    debug_log "Baseline file found: $BASELINE_FILE"
+    BASELINE_DATA=$(cat "$BASELINE_FILE")
+
+    BASELINE_COST=$(echo "$BASELINE_DATA" | jq -r '.cost_usd // 0')
+    BASELINE_DURATION_MS=$(echo "$BASELINE_DATA" | jq -r '.duration_ms // 0')
+    BASELINE_INPUT=$(echo "$BASELINE_DATA" | jq -r '.input_tokens // 0')
+    BASELINE_OUTPUT=$(echo "$BASELINE_DATA" | jq -r '.output_tokens // 0')
+
+    debug_log "Baseline values: cost=$BASELINE_COST duration_ms=$BASELINE_DURATION_MS in=$BASELINE_INPUT out=$BASELINE_OUTPUT"
+    debug_log "Cumulative values: cost=$CUMULATIVE_COST duration_ms=$CUMULATIVE_DURATION_MS in=$CUMULATIVE_INPUT out=$CUMULATIVE_OUTPUT"
+
+    # Edge case: if baseline > current, treat as stale (Claude Code restarted)
+    if [ "$(awk "BEGIN {print ($BASELINE_COST > $CUMULATIVE_COST || $BASELINE_INPUT > $CUMULATIVE_INPUT) ? 1 : 0}")" -eq 1 ]; then
+        log "⚠️  Stale baseline detected (baseline > current), treating as first session"
+        debug_log "Deleting stale baseline file: $BASELINE_FILE"
+        rm -f "$BASELINE_FILE"
+    else
+        # Compute deltas
+        TOTAL_COST=$(awk "BEGIN {printf \"%.2f\", $CUMULATIVE_COST - $BASELINE_COST}")
+        DURATION_MS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_DURATION_MS - $BASELINE_DURATION_MS}")
+        INPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_INPUT - $BASELINE_INPUT}")
+        OUTPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_OUTPUT - $BASELINE_OUTPUT}")
+
+        log "📊 Delta computed: cost=\$$TOTAL_COST (baseline: \$$BASELINE_COST), tokens=$INPUT_TOKENS+$OUTPUT_TOKENS"
+        debug_log "Delta values: cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS"
+    fi
+else
+    debug_log "No baseline file found, using cumulative values as delta (first session)"
+fi
+
+# Calculate duration in minutes (from potentially delta-adjusted DURATION_MS)
 DURATION_MIN=$(awk "BEGIN {printf \"%.2f\", $DURATION_MS / 60000}" 2>/dev/null || echo "0")
+
+# ============================================================================
+# BASELINE MANAGEMENT (must happen before send/skip to avoid double-counting)
+# ============================================================================
+
+if [ "$REASON" = "clear" ]; then
+    # Save current cumulative values as baseline for next session
+    BASELINE_TMP="${BASELINE_FILE}.tmp.$$"
+    jq -n \
+      --arg cost "$CUMULATIVE_COST" \
+      --arg duration "$CUMULATIVE_DURATION_MS" \
+      --arg input "$CUMULATIVE_INPUT" \
+      --arg output "$CUMULATIVE_OUTPUT" \
+      --argjson saved_at "$(date +%s)" \
+      '{
+        cost_usd: ($cost | tonumber),
+        duration_ms: ($duration | tonumber),
+        input_tokens: ($input | tonumber),
+        output_tokens: ($output | tonumber),
+        saved_at: $saved_at
+      }' > "$BASELINE_TMP" && mv -f "$BASELINE_TMP" "$BASELINE_FILE"
+    log "💾 Saved baseline for next session: cost=\$$CUMULATIVE_COST, tokens=$CUMULATIVE_INPUT+$CUMULATIVE_OUTPUT"
+    debug_log "Baseline saved to: $BASELINE_FILE"
+else
+    # Normal exit: delete baseline file (chain is over)
+    if [ -f "$BASELINE_FILE" ]; then
+        rm -f "$BASELINE_FILE"
+        log "🗑️  Deleted baseline file (session chain ended)"
+        debug_log "Baseline file removed: $BASELINE_FILE"
+    fi
+fi
 
 # ============================================================================
 # COUNT MESSAGES AND TOOLS FROM TRANSCRIPT
@@ -814,7 +906,7 @@ fi
 # ============================================================================
 
 # If utilization fields are still null, check for cached OAuth data from statusline
-OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}_oauth.json"
+OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/_oauth_cache.json"
 if [[ "$SEVEN_DAY_UTIL" == "null" || -z "$CLAUDE_ACCOUNT_EMAIL" ]] && [ -f "$OAUTH_CACHE_FILE" ]; then
     log "📂 Using cached OAuth data from statusline hook"
     CACHED_OAUTH=$(cat "$OAUTH_CACHE_FILE")
@@ -843,10 +935,8 @@ if [[ "$SEVEN_DAY_UTIL" == "null" || -z "$CLAUDE_ACCOUNT_EMAIL" ]] && [ -f "$OAU
     if [ -z "$CLAUDE_ACCOUNT_EMAIL" ]; then
         CLAUDE_ACCOUNT_EMAIL=$(echo "$CACHED_OAUTH" | jq -r '.claude_account_email // ""')
     fi
-
-    # Clean up cache file
-    rm -f "$OAUTH_CACHE_FILE"
 fi
+
 
 # ============================================================================
 # CREATE PAYLOAD
@@ -873,6 +963,7 @@ CLAUDE_ACCOUNT_EMAIL="${CLAUDE_ACCOUNT_EMAIL:-}"
 # Format cost to 2 decimal places
 TOTAL_COST=$(printf "%.2f" "$TOTAL_COST")
 
+# Build payload
 PAYLOAD=$(jq -n \
   --arg session_id "$SESSION_ID" \
   --arg developer "$DEVELOPER_EMAIL" \
@@ -930,9 +1021,6 @@ debug_log "payload context_usage_percent=$(echo "$PAYLOAD" | jq -r '.context_usa
 if [[ "$INPUT_TOKENS" -eq 0 && "$OUTPUT_TOKENS" -eq 0 && "$MODEL" == "unknown" ]]; then
     if [ "$(awk "BEGIN {print ($TOTAL_COST == 0) ? 1 : 0}")" -eq 1 ]; then
         log "⏭️  Skipping empty payload for session $SESSION_ID (source: $METRICS_SOURCE) - no meaningful metrics (0 tokens, \$0 cost, unknown model)"
-        # Clean up OAuth cache if it exists
-        OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}_oauth.json"
-        rm -f "$OAUTH_CACHE_FILE"
         exit 0
     fi
 fi
@@ -1053,7 +1141,7 @@ fi
 # Run OAuth fetch in background - does not block statusline output
 (
     # Only fetch every 5 minutes
-    OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/${SESSION_ID}_oauth.json"
+    OAUTH_CACHE_FILE="${METRICS_CACHE_DIR}/_oauth_cache.json"
     LAST_FETCH=0
     if [ -f "$OAUTH_CACHE_FILE" ]; then
         LAST_FETCH=$(jq -r '.fetched_at // 0' "$OAUTH_CACHE_FILE" 2>/dev/null || echo "0")
@@ -1168,6 +1256,16 @@ USED_PCT=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0')
 COST_USD=$(echo "$INPUT" | jq -r '.cost.total_cost_usd // 0')
 PROJECT_DIR=$(echo "$INPUT" | jq -r '.workspace.project_dir // ""')
 
+# Apply baseline delta for cost display after /clear
+if [ -n "$PROJECT_DIR" ]; then
+    _SL_PROJECT_HASH=$(echo -n "$PROJECT_DIR" | md5sum | cut -c1-8)
+    _SL_BASELINE_FILE="${METRICS_CACHE_DIR}/_clear_baseline_${_SL_PROJECT_HASH}.json"
+    if [ -f "$_SL_BASELINE_FILE" ]; then
+        _SL_BASELINE_COST=$(jq -r '.cost_usd // 0' "$_SL_BASELINE_FILE" 2>/dev/null || echo "0")
+        COST_USD=$(awk "BEGIN {v = $COST_USD - $_SL_BASELINE_COST; printf \"%.6f\", (v < 0 ? 0 : v)}")
+    fi
+fi
+
 # Format model name: 10 chars, right padded with spaces
 format_model() {
     local model="$1"
@@ -1280,7 +1378,7 @@ format_reset_time() {
 # Logic: show whichever limit has lower remaining %, tie-break to longer reset time
 format_utilization() {
     local session_id="$1"
-    local oauth_cache="${METRICS_CACHE_DIR}/${session_id}_oauth.json"
+    local oauth_cache="${METRICS_CACHE_DIR}/_oauth_cache.json"
 
     # No OAuth data available
     if [ ! -f "$oauth_cache" ]; then

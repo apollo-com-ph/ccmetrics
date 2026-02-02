@@ -9,6 +9,7 @@ Automated metadata collection for Claude Code sessions with Supabase storage and
 - ✅ **Real-time statusline** showing usage
 - ✅ **Free Supabase storage**
 - ✅ **Privacy-first design**
+- ✅ **/clear segment tracking** (each conversation segment gets its own row)
 
 ## Quick Install
 ```bash
