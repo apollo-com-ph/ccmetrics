@@ -86,33 +86,33 @@ tail -f ~/.claude/ccmetrics.log
 After installing ccmetrics, you can optionally apply recommended Claude Code safety and productivity settings:
 
 ```bash
-bash recommended_cc_settings.sh
+bash recommended_cc_settings.sh              # Interactive mode
+bash recommended_cc_settings.sh --dry-run    # Preview changes
+bash recommended_cc_settings.sh --yes        # Apply all recommendations (Relaxed mode)
 ```
 
-This interactive script configures:
+This interactive script lets you choose a security level for bash permissions:
+
+### Security Levels
+
+| Level | Bash Permissions | Deny Rules | Best For |
+|-------|------------------|------------|----------|
+| **YOLO** | `Bash(*)` allowed, NO deny rules | None | Experienced users who accept all risks, maximum speed |
+| **Relaxed** (default) | `Bash(*)` allowed, dangerous commands blocked | Full deny list | Trusted projects, daily use, good balance |
+| **Balanced** | Whitelist of safe commands (npm, git read-ops, pytest, etc.) | Full deny list | Unfamiliar codebases, explicit control |
+| **Strict** | No auto-allow, prompt for everything | N/A | Sensitive environments, learning Claude |
+
+### Settings Configured
 
 | Setting | Description |
 |---------|-------------|
 | **Model: opusplan** | Uses Opus for planning (deep reasoning) and Sonnet for implementation (fast, cost-effective) |
 | **Default Mode: plan** | Start sessions in plan mode for thoughtful analysis before making changes |
-| **Bash Allow** | Allow bash commands without prompts (with deny list guards for safety) |
+| **Bash Permissions** | Based on your chosen security level (see table above) |
 | **GitHub Fetch Allow** | Fetch from GitHub without prompts (read-only access) |
-| **File Deletion Guards** | Block `rm -rf *`, `rm -r *`, `rmdir *` |
-| **Git Safety Guards** | Block force push, reset --hard, clean, restore, branch -D |
-| **API/Misc Guards** | Block GitHub API mutations, chmod 777, file redirection, sed -i |
-
-### Usage
-
-```bash
-# Interactive mode (recommended)
-bash recommended_cc_settings.sh
-
-# Preview changes without applying
-bash recommended_cc_settings.sh --dry-run
-
-# Apply all recommendations non-interactively
-bash recommended_cc_settings.sh --yes
-```
+| **File Deletion Guards** | Block `rm -rf *`, `rm -r *`, `rmdir *` (Relaxed/Balanced only) |
+| **Git Safety Guards** | Block force push, reset --hard, clean, restore, branch -D (Relaxed/Balanced only) |
+| **API/Misc Guards** | Block GitHub API mutations, chmod 777, file redirection, sed -i (Relaxed/Balanced only) |
 
 The script safely merges with your existing `~/.claude/settings.json` and creates a backup before making changes. Each setting is explained with current vs. recommended values.
 
