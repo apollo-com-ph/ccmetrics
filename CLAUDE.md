@@ -46,10 +46,25 @@ ls ~/.claude/metrics_queue/ | wc -l                        # Queue size
 
 ## Statusline
 
-Format: `[Model]%/$usd (remaining% reset label) parent/project`
-Example: `[Sonnet 4.5]38%/$7.4 (72% 4h12m 5h) cc_workspace/ccmetrics`
+Format: `[Model]%/$usd (remaining% reset) [!warning!] parent/project`
 
-The parenthetical shows API utilization: remaining capacity %, time until reset, and which limit (5h or 7d). Displays whichever limit has lower remaining %; on tie, shows the one with longer reset time. Shows `(-- ----- --)` when OAuth data is unavailable.
+**Examples:**
+```
+# Normal: 7d usage is sustainable
+[Sonnet 4.5]38%/$7.4 (72% 4h12m) cc_workspace/ccmetrics
+
+# Warning: 7d usage exceeds sustainable rate
+[Sonnet 4.5]38%/$7.4 (72% 4h12m) !15% 6d13h! cc_workspace/ccmetrics
+```
+
+**Display logic:**
+- **Always shows 5h limits:** `(remaining% reset_time)` - primary display
+- **Conditional 7d warning:** Shows `!remaining% reset_time!` only when 7-day utilization exceeds sustainable rate
+  - Sustainable rate = 14.28% per day (100% / 7 days)
+  - Threshold is dynamic: `days_elapsed × 14.28%`
+  - Warning shown if current usage > threshold
+  - Example: At day 3 (elapsed), threshold = 42.84%; if you've used 50%, warning appears
+- Shows `(-- -----)` when OAuth data is unavailable
 
 **Cost display after /clear:** The statusline applies the same baseline delta logic as SessionEnd, so the `$usd` portion resets to $0.0 when `/clear` is used and shows only the cost for the current session segment.
 
