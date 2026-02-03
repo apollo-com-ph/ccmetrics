@@ -27,7 +27,10 @@ See `README.md` for user-facing install, usage, and troubleshooting docs.
   - On `reason=clear`: sends delta to Supabase, saves new baseline for next session
   - On normal exit: sends delta, deletes baseline (chain is over)
 - SessionEnd reads cache + transcript → computes baseline delta (if in /clear chain) → checks OAuth token expiry → fetches usage/profile with retry (or uses cached fallback if expired) → POST to Supabase (empty payloads skipped) → on failure, queue for retry
-- **VS Code compatibility:** The statusline hook fires in VS Code native UI mode (output just isn't displayed), so caching and OAuth work normally. SessionEnd also has a stdin fallback + transcript parsing fallback as defense-in-depth. The statusline output is written to `_statusline.txt` for external consumers (e.g., a VS Code status bar extension).
+- **VS Code compatibility:**
+  - **`useTerminal=true` (terminal mode):** Full metrics support. Statusline hook fires, providing real-time cost/token/context data. SessionEnd uses cached data.
+  - **`useTerminal=false` (native UI mode):** Statusline hook does NOT fire. SessionEnd falls back to transcript parsing for tokens/model, then calculates approximate cost from token counts (using base pricing rates), context usage from total tokens, and duration from message timestamps. All metrics are recoverable but cost is approximate (doesn't account for cache pricing tiers).
+  - The statusline output is written to `_statusline.txt` for external consumers (e.g., a VS Code status bar extension).
 
 ## Commands
 

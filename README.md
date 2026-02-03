@@ -142,15 +142,17 @@ If you use Claude Code through the VS Code extension instead of the CLI, follow 
 
 ### Statusline in VS Code
 
-The statusline hook runs in VS Code native UI mode (caching metrics and OAuth data normally), but VS Code does not render its output. The formatted statusline is written to `~/.claude/metrics_cache/_statusline.txt` so external tools can read it.
+**Native UI mode (`useTerminal=false`, the default):** The statusline hook does NOT fire in VS Code's native UI mode. Metrics collection still works but uses transcript parsing as a fallback at session end, calculating approximate cost from token counts. This results in slightly less precise cost tracking (base pricing rates only, no cache tier discounts).
 
-To see the statusline directly, switch to terminal mode by adding this to your VS Code `settings.json` (Ctrl/Cmd+Shift+P → "Preferences: Open User Settings (JSON)"):
+**Terminal mode (`useTerminal=true`):** Full metrics support with real-time cost/token/context data. Recommended for complete tracking accuracy.
+
+To enable terminal mode, add this to your VS Code `settings.json` (Ctrl/Cmd+Shift+P → "Preferences: Open User Settings (JSON)"):
 
 ```json
 "claudeCode.useTerminal": true
 ```
 
-Then reload VS Code. Terminal mode gives you the same experience as the CLI, including the statusline.
+Then reload VS Code. Terminal mode gives you the same experience as the CLI, including the visible statusline.
 
 ## Statusline Display
 

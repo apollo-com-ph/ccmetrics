@@ -764,6 +764,42 @@ if { [ -z "$MODEL" ] || [ "$MODEL" = "unknown" ]; } && [ "${INPUT_TOKENS:-0}" = 
     fi
 fi
 
+# Calculate approximate cost, context, and duration when using transcript source
+if [ "$METRICS_SOURCE" = "transcript" ]; then
+    # --- Cost Calculation ---
+    # Pricing per 1M tokens (Jan 2025 - https://www.anthropic.com/pricing)
+    # Opus 4: $15 input, $75 output
+    # Sonnet 4: $3 input, $15 output
+    # Note: Approximate - doesn't account for cache pricing tiers
+    if [[ "$MODEL" == *"opus"* ]]; then
+        TOTAL_COST=$(awk "BEGIN {printf \"%.4f\", (${INPUT_TOKENS:-0} * 15 + ${OUTPUT_TOKENS:-0} * 75) / 1000000}")
+    else
+        # Default to Sonnet pricing for unknown models
+        TOTAL_COST=$(awk "BEGIN {printf \"%.4f\", (${INPUT_TOKENS:-0} * 3 + ${OUTPUT_TOKENS:-0} * 15) / 1000000}")
+    fi
+
+    # --- Context Usage Calculation ---
+    # Context window is 200000 for Claude models
+    CONTEXT_WINDOW_SIZE=200000
+    TOTAL_TOKENS=$((${INPUT_TOKENS:-0} + ${OUTPUT_TOKENS:-0}))
+    CONTEXT_PERCENT=$(awk "BEGIN {printf \"%.0f\", ($TOTAL_TOKENS * 100) / $CONTEXT_WINDOW_SIZE}")
+
+    # --- Duration Calculation ---
+    # Extract first and last timestamps from transcript
+    FIRST_TS=$(jq -r 'select(.timestamp) | .timestamp' "$TRANSCRIPT_PATH" 2>/dev/null | head -1)
+    LAST_TS=$(jq -r 'select(.timestamp) | .timestamp' "$TRANSCRIPT_PATH" 2>/dev/null | tail -1)
+    if [ -n "$FIRST_TS" ] && [ -n "$LAST_TS" ]; then
+        # Convert ISO timestamps to epoch seconds and calculate difference
+        FIRST_EPOCH=$(date -d "$FIRST_TS" +%s 2>/dev/null || echo 0)
+        LAST_EPOCH=$(date -d "$LAST_TS" +%s 2>/dev/null || echo 0)
+        if [ "$FIRST_EPOCH" -gt 0 ] && [ "$LAST_EPOCH" -gt 0 ]; then
+            DURATION_MS=$(( (LAST_EPOCH - FIRST_EPOCH) * 1000 ))
+        fi
+    fi
+
+    debug_log "calculated from transcript: cost=\$${TOTAL_COST}, context=${CONTEXT_PERCENT}%, duration=${DURATION_MS}ms"
+fi
+
 # Detect client type (CLI vs VS Code)
 CLIENT_TYPE="cli"
 if [ -n "${VSCODE_PID:-}" ] || [ "${TERM_PROGRAM:-}" = "vscode" ] \
