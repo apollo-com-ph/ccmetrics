@@ -203,8 +203,10 @@ See [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md#useful-sql-queries) for example quer
 ├── metrics_queue/                   # Retry queue for failed sends
 │   └── [timestamp]_[uuid].json
 ├── metrics_cache/                   # Session data cache for SessionEnd
-│   ├── [session_id].json
-│   └── [session_id]_oauth.json
+│   ├── [session_id].json            # Per-session metrics
+│   ├── _oauth_cache.json            # Shared OAuth cache (updated every 5min)
+│   ├── _statusline.txt              # Statusline output for VS Code
+│   └── _clear_baseline_*.json       # Per-project /clear delta tracking
 └── hooks/
     ├── send_claude_metrics.sh       # Main metrics collection hook
     ├── process_metrics_queue.sh     # Queue processor (SessionStart)
