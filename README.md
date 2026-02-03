@@ -138,12 +138,23 @@ Then reload VS Code. Terminal mode gives you the same experience as the CLI, inc
 
 ## Statusline Display
 
-Format: `[Model]%/$usd (remaining% reset label) parent/project`
+Format: `[Model]%/$usd (remaining% reset) [!warning!] parent/project`
+
+**Examples:**
 ```
-[Sonnet 4.5]38%/$7.4 (72% 4h12m 5h) cc_workspace/ccmetrics
+# Normal: 7d usage is sustainable
+[Sonnet 4.5]38%/$7.4 (72% 4h12m) cc_workspace/ccmetrics
+
+# Warning: 7d usage exceeds sustainable rate
+[Sonnet 4.5]38%/$7.4 (72% 4h12m) !15% 6d13h! cc_workspace/ccmetrics
 ```
 
-The parenthetical shows API utilization: remaining capacity %, time until reset, and which limit (5h or 7d). Displays whichever limit has lower remaining %. Shows `(-- ----- --)` when OAuth data is unavailable.
+**Display logic:**
+- **Always shows 5h limits:** Primary display showing remaining % and time until reset
+- **Conditional 7d warning:** Appears only when your 7-day usage exceeds the sustainable rate (14.28% per day)
+  - Threshold is dynamic based on days elapsed: `days_elapsed × 14.28%`
+  - Example: At day 3, threshold is 42.84% - warning shows if you've used more than that
+- Shows `(-- -----)` when OAuth data is unavailable
 
 To customize, edit `~/.claude/hooks/ccmetrics_statusline.sh` -- see comments in the script for available fields and formatting functions.
 

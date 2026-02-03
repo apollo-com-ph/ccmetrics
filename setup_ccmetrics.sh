@@ -1442,15 +1442,15 @@ format_reset_time() {
     fi
 }
 
-# Read OAuth cache and select which utilization to display
-# Logic: show whichever limit has lower remaining %, tie-break to longer reset time
+# Read OAuth cache and format utilization display
+# Logic: Always show 5h limits, conditionally show 7d warning if exceeding sustainable rate
 format_utilization() {
     local session_id="$1"
     local oauth_cache="${METRICS_CACHE_DIR}/_oauth_cache.json"
 
     # No OAuth data available
     if [ ! -f "$oauth_cache" ]; then
-        echo "(-- ----- --)"
+        echo "(-- -----)"
         return
     fi
 
@@ -1470,61 +1470,61 @@ format_utilization() {
 
     # Neither available
     if [ "$have_5h" = "false" ] && [ "$have_7d" = "false" ]; then
-        echo "(-- ----- --)"
+        echo "(-- -----)"
         return
     fi
 
-    # Calculate remaining percentages (100 - utilization)
-    local five_hour_remaining seven_day_remaining
-    if [ "$have_5h" = "true" ]; then
-        five_hour_remaining=$(awk "BEGIN {printf \"%.0f\", 100 - $five_hour_util}")
+    # 5h is required - if missing, show placeholder
+    if [ "$have_5h" = "false" ]; then
+        echo "(-- -----)"
+        return
     fi
+
+    # Calculate remaining percentage for 5h (100 - utilization)
+    local five_hour_remaining
+    five_hour_remaining=$(awk "BEGIN {printf \"%.0f\", 100 - $five_hour_util}")
+
+    # Always format 5h as primary display (no label needed since it's always 5h)
+    local five_hour_fmt reset_fmt
+    reset_fmt=$(format_reset_time "$five_hour_resets")
+    five_hour_fmt=$(printf "(%2d%% %5s)" "$five_hour_remaining" "$reset_fmt")
+
+    # Check if 7d warning should be shown
+    local seven_day_warning=""
+
     if [ "$have_7d" = "true" ]; then
-        seven_day_remaining=$(awk "BEGIN {printf \"%.0f\", 100 - $seven_day_util}")
-    fi
-
-    local show_label show_remaining show_resets
-
-    if [ "$have_5h" = "true" ] && [ "$have_7d" = "false" ]; then
-        # Only 5h available
-        show_label="5h"
-        show_remaining="$five_hour_remaining"
-        show_resets="$five_hour_resets"
-    elif [ "$have_5h" = "false" ] && [ "$have_7d" = "true" ]; then
-        # Only 7d available
-        show_label="7d"
-        show_remaining="$seven_day_remaining"
-        show_resets="$seven_day_resets"
-    elif [ "$seven_day_remaining" -lt "$five_hour_remaining" ]; then
-        # 7d is more constrained
-        show_label="7d"
-        show_remaining="$seven_day_remaining"
-        show_resets="$seven_day_resets"
-    elif [ "$five_hour_remaining" -lt "$seven_day_remaining" ]; then
-        # 5h is more constrained
-        show_label="5h"
-        show_remaining="$five_hour_remaining"
-        show_resets="$five_hour_resets"
-    else
-        # Equal remaining: show whichever has longer reset time (harder constraint)
-        local five_reset_epoch seven_reset_epoch now_epoch
+        # Calculate days remaining until 7d reset
+        local now_epoch reset_epoch seconds_remaining days_remaining days_elapsed
         now_epoch=$(date +%s)
-        five_reset_epoch=$(date -d "$five_hour_resets" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${five_hour_resets%.*}" +%s 2>/dev/null || echo 0)
-        seven_reset_epoch=$(date -d "$seven_day_resets" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${seven_day_resets%.*}" +%s 2>/dev/null || echo 0)
-        if [ "$seven_reset_epoch" -ge "$five_reset_epoch" ]; then
-            show_label="7d"
-            show_remaining="$seven_day_remaining"
-            show_resets="$seven_day_resets"
-        else
-            show_label="5h"
-            show_remaining="$five_hour_remaining"
-            show_resets="$five_hour_resets"
+        reset_epoch=$(date -d "$seven_day_resets" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "${seven_day_resets%.*}" +%s 2>/dev/null || echo "$now_epoch")
+        seconds_remaining=$((reset_epoch - now_epoch))
+
+        # Avoid negative values if reset is in the past
+        if [ "$seconds_remaining" -lt 0 ]; then
+            seconds_remaining=0
+        fi
+
+        # Convert to days (with fractional precision)
+        days_remaining=$(awk "BEGIN {printf \"%.2f\", $seconds_remaining / 86400}")
+        days_elapsed=$(awk "BEGIN {printf \"%.2f\", 7 - $days_remaining}")
+
+        # Sustainable threshold = days_elapsed × 14.28%
+        local sustainable_threshold
+        sustainable_threshold=$(awk "BEGIN {printf \"%.2f\", $days_elapsed * 14.28}")
+
+        # Show warning if current utilization exceeds sustainable threshold
+        local exceeds_threshold
+        exceeds_threshold=$(awk "BEGIN {print ($seven_day_util > $sustainable_threshold) ? 1 : 0}")
+
+        if [ "$exceeds_threshold" -eq 1 ]; then
+            local seven_day_remaining seven_reset_fmt
+            seven_day_remaining=$(awk "BEGIN {printf \"%.0f\", 100 - $seven_day_util}")
+            seven_reset_fmt=$(format_reset_time "$seven_day_resets")
+            seven_day_warning=$(printf " !%d%% %s!" "$seven_day_remaining" "$seven_reset_fmt")
         fi
     fi
 
-    local reset_fmt
-    reset_fmt=$(format_reset_time "$show_resets")
-    printf "(%2d%% %5s %s)" "$show_remaining" "$reset_fmt" "$show_label"
+    echo "${five_hour_fmt}${seven_day_warning}"
 }
 
 # Apply formatting
