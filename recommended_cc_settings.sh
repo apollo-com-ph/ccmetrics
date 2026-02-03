@@ -38,9 +38,16 @@ print_header() {
 print_section_header() {
     local num=$1
     local title=$2
+    local total=${3:-}  # Optional third parameter for total
+    local display="[${num}"
+    if [[ -n "$total" ]]; then
+        display+="/${total}"
+    fi
+    display+="] ${title}"
+
     echo -e "${BOLD}${BLUE}"
     echo "──────────────────────────────────────────────────────────────"
-    echo "[${num}/7] ${title}"
+    echo "$display"
     echo "──────────────────────────────────────────────────────────────"
     echo -e "${RESET}"
 }
@@ -109,7 +116,7 @@ array_contains() {
 
 # Prompt 1: Model Selection
 prompt_model() {
-    print_section_header "1" "Model Selection"
+    print_section_header "1" "Model Selection" "${TOTAL_SECTIONS}"
     echo ""
     print_info "  The 'opusplan' model uses Opus for planning phases and Sonnet"
     print_info "  for implementation. This provides:"
@@ -135,7 +142,7 @@ prompt_model() {
 
 # Prompt 2: Default Mode
 prompt_default_mode() {
-    print_section_header "2" "Default Mode"
+    print_section_header "2" "Default Mode" "${TOTAL_SECTIONS}"
     echo ""
     print_info "  Starting in 'plan' mode means Claude will analyze your request"
     print_info "  and create a detailed implementation plan before making changes."
@@ -159,42 +166,167 @@ prompt_default_mode() {
     echo ""
 }
 
-# Prompt 3: Bash Allow
-prompt_bash_allow() {
-    print_section_header "3" "Bash Command Access"
+# Prompt 3: Security Level
+prompt_security_level() {
+    print_section_header "3" "Security Level" "${TOTAL_SECTIONS}"
     echo ""
-    print_info "  Allow Claude to run bash commands without prompting for each one."
-    print_info "  This significantly improves productivity while safety is maintained"
-    print_info "  through deny rules (configured in later steps)."
+    print_info "  Choose how restrictive Claude's bash permissions should be:"
     echo ""
-    echo "  • Faster workflow (no constant permission prompts)"
-    echo "  • Safety maintained via deny list for dangerous commands"
-    echo "  • Recommended for trusted projects"
+    echo "  ${BOLD}[Y] YOLO${RESET} - Maximum speed, minimum safety"
+    echo "      • Bash(*) allowed, NO deny rules"
+    echo "      • Best for: Experienced users who accept all risks"
+    echo "      • Trade-off: No guardrails at all"
+    echo ""
+    echo "  ${BOLD}[R] Relaxed${RESET} - Fast workflow with safety nets (default)"
+    echo "      • Bash(*) allowed, dangerous commands blocked"
+    echo "      • Best for: Trusted projects, daily use"
+    echo "      • Trade-off: Scripts run without prompting"
+    echo ""
+    echo "  ${BOLD}[B] Balanced${RESET} - Explicit control over permissions"
+    echo "      • Whitelist: npm, yarn, git read-ops, pytest, etc."
+    echo "      • Scripts (.sh) require separate approval"
+    echo "      • Best for: Unfamiliar codebases, reviewing AI actions"
+    echo "      • Trade-off: More prompts for uncommon commands"
+    echo ""
+    echo "  ${BOLD}[S] Strict${RESET} - Maximum security, prompt for everything"
+    echo "      • No bash commands auto-allowed"
+    echo "      • Every command requires explicit approval"
+    echo "      • Best for: Sensitive environments, learning Claude"
+    echo "      • Trade-off: Constant permission prompts"
     echo ""
 
-    if array_contains "allow" "Bash(*)"; then
-        print_current "Bash(*) already allowed"
-        print_skip "Skipping (already configured)"
+    if [[ "$YES_MODE" == true ]]; then
+        CHOICES["security_level"]="relaxed"
+        print_success "Security level: relaxed (default)"
         echo ""
         return
     fi
 
-    print_current "Bash commands require prompts"
-    print_recommended "Bash(*) allowed"
+    read -p "$(echo -e ${BOLD}Choose security level [Y/R/B/S] \(default: R\): ${RESET})" choice
+    choice=${choice:-R}
+
+    case "$choice" in
+        [yY]) CHOICES["security_level"]="yolo" ;;
+        [bB]) CHOICES["security_level"]="balanced" ;;
+        [sS]) CHOICES["security_level"]="strict" ;;
+        *)    CHOICES["security_level"]="relaxed" ;;
+    esac
+
+    print_success "Security level: ${CHOICES[security_level]}"
+    echo ""
+}
+
+# Prompt 4: Bash Allow (Relaxed/Balanced modes)
+prompt_bash_allow() {
+    local level="${CHOICES[security_level]:-relaxed}"
+
+    # Skip for YOLO (handled in build_new_settings) and Strict (prompts everything)
+    if [[ "$level" == "yolo" || "$level" == "strict" ]]; then
+        return
+    fi
+
+    # Relaxed mode: traditional Bash(*) approach
+    if [[ "$level" == "relaxed" ]]; then
+        print_section_header "4" "Bash Command Access" "${TOTAL_SECTIONS}"
+        echo ""
+        print_info "  Allow Claude to run bash commands without prompting for each one."
+        print_info "  This includes running shell scripts (.sh files) from any location."
+        print_info "  Safety is maintained through deny rules (configured in later steps)."
+        echo ""
+        echo "  • Faster workflow (no constant permission prompts)"
+        echo "  • Safety maintained via deny list for dangerous commands"
+        echo "  • Recommended for trusted projects"
+        echo ""
+
+        if array_contains "allow" "Bash(*)"; then
+            print_current "Bash(*) already allowed"
+            print_skip "Skipping (already configured)"
+            echo ""
+            return
+        fi
+
+        print_current "Bash commands require prompts"
+        print_recommended "Bash(*) allowed"
+        echo ""
+
+        if prompt_yn "  Apply this setting? (Y/n): "; then
+            CHOICES["allow_bash"]="yes"
+            print_success "Bash commands will be allowed"
+        else
+            print_skip "Bash commands will continue to require prompts"
+        fi
+        echo ""
+        return
+    fi
+
+    # Balanced mode: whitelist approach
+    print_section_header "4" "Common Development Commands" "${TOTAL_SECTIONS}"
+    echo ""
+    print_info "  Allow Claude to run common development commands without prompting."
+    print_info "  Uncommon commands will still require approval."
+    echo ""
+    echo "  Commands that will be allowed:"
+    echo "    • Package managers: npm, yarn, pnpm, pip, cargo"
+    echo "    • Git (read): status, log, diff, branch, show"
+    echo "    • Build/test: make, pytest, jest, cargo build/test"
+    echo "    • Runtimes: node, python, python3"
+    echo ""
+    echo "  Commands that will prompt:"
+    echo "    • Shell scripts (.sh files) - see next section"
+    echo "    • Git write ops (commit, push, etc.)"
+    echo "    • System commands (chmod, chown, etc.)"
     echo ""
 
     if prompt_yn "  Apply this setting? (Y/n): "; then
-        CHOICES["allow_bash"]="yes"
-        print_success "Bash commands will be allowed"
+        CHOICES["allow_bash_whitelist"]="yes"
+        print_success "Common development commands will be allowed"
     else
-        print_skip "Bash commands will continue to require prompts"
+        print_skip "All bash commands will continue to require prompts"
     fi
     echo ""
 }
 
-# Prompt 4: WebFetch Allow
+# Prompt 5: Shell Script Execution (Balanced mode only)
+prompt_script_execution() {
+    local level="${CHOICES[security_level]:-relaxed}"
+
+    # Only applicable in balanced mode
+    if [[ "$level" != "balanced" ]]; then
+        return
+    fi
+
+    print_section_header "5" "Shell Script Execution" "${TOTAL_SECTIONS}"
+    echo ""
+    print_info "  Allow Claude to execute shell scripts (.sh files)."
+    print_info "  This is more permissive - scripts can run arbitrary commands."
+    echo ""
+    echo "  • Useful for: running build.sh, test.sh, project scripts"
+    echo "  • Risk: Scripts may contain any command"
+    echo "  • Recommendation: Enable for trusted projects only"
+    echo ""
+
+    if prompt_yn "  Allow shell script execution? (Y/n): "; then
+        CHOICES["allow_scripts"]="yes"
+        print_success "Shell script execution will be allowed"
+    else
+        print_skip "Shell scripts will require approval"
+    fi
+    echo ""
+}
+
+# Prompt 6: WebFetch Allow
 prompt_webfetch_allow() {
-    print_section_header "4" "GitHub Fetch Access"
+    local level="${CHOICES[security_level]:-relaxed}"
+
+    # Calculate what section number this is
+    local section_num=4  # Base: Model, Mode, Security + 1
+    if [[ "$level" == "balanced" ]]; then
+        section_num=6  # Model, Mode, Security, Dev Cmds, Scripts + 1
+    elif [[ "$level" == "relaxed" ]]; then
+        section_num=5  # Model, Mode, Security, Bash + 1
+    fi
+
+    print_section_header "$section_num" "GitHub Fetch Access" "${TOTAL_SECTIONS}"
     echo ""
     print_info "  Allow Claude to fetch content from GitHub without prompting."
     print_info "  Useful for reading documentation, PRs, and issues."
@@ -224,9 +356,22 @@ prompt_webfetch_allow() {
     echo ""
 }
 
-# Prompt 5: File Deletion Guards
+# Prompt 7: File Deletion Guards
 prompt_file_deletion_guards() {
-    print_section_header "5" "File Deletion Guards"
+    local level="${CHOICES[security_level]:-relaxed}"
+
+    # Skip for YOLO (no deny rules) and Strict (everything prompts anyway)
+    if [[ "$level" == "yolo" || "$level" == "strict" ]]; then
+        return
+    fi
+
+    # Calculate section number
+    local section_num=6  # Relaxed: Model, Mode, Security, Bash, GitHub + 1
+    if [[ "$level" == "balanced" ]]; then
+        section_num=7  # Model, Mode, Security, Dev Cmds, Scripts, GitHub + 1
+    fi
+
+    print_section_header "$section_num" "File Deletion Guards" "${TOTAL_SECTIONS}"
     echo ""
     print_info "  These rules prevent bulk or recursive file deletion:"
     echo ""
@@ -248,9 +393,22 @@ prompt_file_deletion_guards() {
     echo ""
 }
 
-# Prompt 6: Git Safety Guards
+# Prompt 8: Git Safety Guards
 prompt_git_guards() {
-    print_section_header "6" "Git Safety Guards"
+    local level="${CHOICES[security_level]:-relaxed}"
+
+    # Skip for YOLO (no deny rules) and Strict (everything prompts anyway)
+    if [[ "$level" == "yolo" || "$level" == "strict" ]]; then
+        return
+    fi
+
+    # Calculate section number
+    local section_num=7  # Relaxed: Model, Mode, Security, Bash, GitHub, File Del + 1
+    if [[ "$level" == "balanced" ]]; then
+        section_num=8  # Model, Mode, Security, Dev Cmds, Scripts, GitHub, File Del + 1
+    fi
+
+    print_section_header "$section_num" "Git Safety Guards" "${TOTAL_SECTIONS}"
     echo ""
     print_info "  These rules prevent destructive git operations:"
     echo ""
@@ -275,9 +433,22 @@ prompt_git_guards() {
     echo ""
 }
 
-# Prompt 7: API & Misc Guards
+# Prompt 9: API & Misc Guards
 prompt_api_misc_guards() {
-    print_section_header "7" "API & Miscellaneous Guards"
+    local level="${CHOICES[security_level]:-relaxed}"
+
+    # Skip for YOLO (no deny rules) and Strict (everything prompts anyway)
+    if [[ "$level" == "yolo" || "$level" == "strict" ]]; then
+        return
+    fi
+
+    # Calculate section number
+    local section_num=8  # Relaxed: Model, Mode, Security, Bash, GitHub, File Del, Git + 1
+    if [[ "$level" == "balanced" ]]; then
+        section_num=9  # Model, Mode, Security, Dev Cmds, Scripts, GitHub, File Del, Git + 1
+    fi
+
+    print_section_header "$section_num" "API & Miscellaneous Guards" "${TOTAL_SECTIONS}"
     echo ""
     print_info "  Additional safety rules:"
     echo ""
@@ -314,9 +485,57 @@ build_new_settings() {
         new_settings=$(echo "$new_settings" | jq ". + {\"defaultMode\": \"${CHOICES[defaultMode]}\"}")
     fi
 
-    # Build allow array
+    # Build allow array based on security level
     local allow_items=()
-    [[ "${CHOICES[allow_bash]:-}" == "yes" ]] && allow_items+=("Bash(*)")
+    local level="${CHOICES[security_level]:-relaxed}"
+
+    case "$level" in
+        yolo)
+            # YOLO: Bash(*) with no deny rules
+            allow_items+=("Bash(*)")
+            ;;
+        relaxed)
+            # Relaxed: Bash(*) with deny rules
+            [[ "${CHOICES[allow_bash]:-}" == "yes" ]] && allow_items+=("Bash(*)")
+            ;;
+        balanced)
+            # Balanced: Whitelist + optional scripts
+            if [[ "${CHOICES[allow_bash_whitelist]:-}" == "yes" ]]; then
+                # Package managers
+                allow_items+=("Bash(npm *)" "Bash(npm)" "Bash(npx *)")
+                allow_items+=("Bash(yarn *)" "Bash(yarn)")
+                allow_items+=("Bash(pnpm *)" "Bash(pnpm)")
+                allow_items+=("Bash(pip install *)" "Bash(pip3 install *)" "Bash(pip list*)" "Bash(pip show *)")
+                allow_items+=("Bash(cargo *)")
+                allow_items+=("Bash(go get *)" "Bash(go build *)" "Bash(go test *)" "Bash(go run *)")
+
+                # Git read operations (write ops excluded for safety)
+                allow_items+=("Bash(git status*)" "Bash(git log *)" "Bash(git log)")
+                allow_items+=("Bash(git diff *)" "Bash(git diff)" "Bash(git branch*)")
+                allow_items+=("Bash(git show *)" "Bash(git remote *)")
+
+                # Build/test tools
+                allow_items+=("Bash(make *)" "Bash(make)")
+                allow_items+=("Bash(pytest *)" "Bash(pytest)")
+                allow_items+=("Bash(jest *)" "Bash(jest)")
+                allow_items+=("Bash(cargo build*)" "Bash(cargo test*)" "Bash(cargo run*)")
+
+                # Runtimes
+                allow_items+=("Bash(node *)" "Bash(python *)" "Bash(python3 *)")
+            fi
+
+            # Scripts (if user accepted)
+            if [[ "${CHOICES[allow_scripts]:-}" == "yes" ]]; then
+                allow_items+=("Bash(bash *)" "Bash(sh *)" "Bash(./*.sh)")
+            fi
+            ;;
+        strict)
+            # Strict: No bash auto-allow (empty allow_items for bash)
+            # User will be prompted for every command
+            ;;
+    esac
+
+    # Add WebFetch (applies to all levels)
     [[ "${CHOICES[allow_webfetch]:-}" == "yes" ]] && allow_items+=("WebFetch(domain:github.com)")
 
     if [[ ${#allow_items[@]} -gt 0 ]]; then
@@ -324,19 +543,21 @@ build_new_settings() {
         new_settings=$(echo "$new_settings" | jq ". + {\"allow\": $allow_json}")
     fi
 
-    # Build deny array
+    # Build deny array (skip for YOLO and Strict)
     local deny_items=()
 
-    if [[ "${CHOICES[deny_file_deletion]:-}" == "yes" ]]; then
-        deny_items+=("rm -rf *" "rm -r *" "rmdir *")
-    fi
+    if [[ "$level" != "yolo" && "$level" != "strict" ]]; then
+        if [[ "${CHOICES[deny_file_deletion]:-}" == "yes" ]]; then
+            deny_items+=("rm -rf *" "rm -r *" "rmdir *")
+        fi
 
-    if [[ "${CHOICES[deny_git]:-}" == "yes" ]]; then
-        deny_items+=("git push --force *" "git push -f *" "git reset --hard *" "git clean *" "git checkout -- *" "git restore *" "git branch -D *")
-    fi
+        if [[ "${CHOICES[deny_git]:-}" == "yes" ]]; then
+            deny_items+=("git push --force *" "git push -f *" "git reset --hard *" "git clean *" "git checkout -- *" "git restore *" "git branch -D *")
+        fi
 
-    if [[ "${CHOICES[deny_misc]:-}" == "yes" ]]; then
-        deny_items+=("gh api -X DELETE *" "gh api -X PUT *" "gh api -X POST *" "chmod -R 777 *" "> *" "sed -i *")
+        if [[ "${CHOICES[deny_misc]:-}" == "yes" ]]; then
+            deny_items+=("gh api -X DELETE *" "gh api -X PUT *" "gh api -X POST *" "chmod -R 777 *" "> *" "sed -i *")
+        fi
     fi
 
     if [[ ${#deny_items[@]} -gt 0 ]]; then
@@ -459,6 +680,22 @@ EXAMPLES:
 EOF
 }
 
+# Calculate total sections based on security level
+calculate_total_sections() {
+    local level="${CHOICES[security_level]:-relaxed}"
+    case "$level" in
+        yolo)   echo "5" ;;  # Model, Mode, Security, GitHub, Final
+        strict) echo "5" ;;  # Model, Mode, Security, GitHub, Final
+        balanced) echo "9" ;;  # Model, Mode, Security, Dev Cmds, Scripts, GitHub, File Del, Git, API
+        *)      echo "8" ;;  # Relaxed: Model, Mode, Security, Bash, GitHub, File Del, Git, API
+    esac
+}
+
+# Update current section counter
+increment_section() {
+    CURRENT_SECTION=$((CURRENT_SECTION + 1))
+}
+
 # Main function
 main() {
     # Parse arguments
@@ -497,10 +734,20 @@ main() {
         echo ""
     fi
 
-    # Run all prompts
+    # Initialize section counter (will be updated after security level is chosen)
+    TOTAL_SECTIONS="7"  # Temporary, will be recalculated
+
+    # Run prompts in order
     prompt_model
     prompt_default_mode
+    prompt_security_level
+
+    # Now calculate actual total sections based on security level
+    TOTAL_SECTIONS=$(calculate_total_sections)
+
+    # Continue with remaining prompts (each calculates its own section number)
     prompt_bash_allow
+    prompt_script_execution
     prompt_webfetch_allow
     prompt_file_deletion_guards
     prompt_git_guards
