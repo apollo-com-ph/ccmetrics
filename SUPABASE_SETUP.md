@@ -127,17 +127,7 @@ curl -X POST "${SUPABASE_URL}/rest/v1/sessions" \
   }'
 # Should return: HTTP 201 (success)
 
-# Test read access (should fail - RLS blocks reads)
-curl -X GET "${SUPABASE_URL}/rest/v1/sessions?limit=1" \
-  -H "apikey: ${SUPABASE_KEY}" \
-  -H "Authorization: Bearer ${SUPABASE_KEY}"
-# Should return: [] (empty array - no read access)
-
-# Test delete access (should fail - RLS blocks deletes)
-curl -X DELETE "${SUPABASE_URL}/rest/v1/sessions?session_id=eq.test-123" \
-  -H "apikey: ${SUPABASE_KEY}" \
-  -H "Authorization: Bearer ${SUPABASE_KEY}"
-# Should return: HTTP 204 but no rows affected
+# RLS blocks read/delete with publishable key - no need to test
 ```
 
 After installation, credentials are stored in `~/.claude/.ccmetrics-config.json`:

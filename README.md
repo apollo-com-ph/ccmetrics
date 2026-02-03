@@ -39,21 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_
 
 - Claude Code installed
 - Supabase account (free tier)
-- Dependencies: `jq`, `curl`, `awk`
-
-Install before running setup:
-```bash
-# macOS
-brew install jq curl
-
-# Ubuntu/Debian
-sudo apt install jq curl
-
-# Fedora/RHEL
-sudo dnf install jq curl
-```
-
-Note: `awk` and `curl` are pre-installed on most Unix systems.
+- `jq` installed (`brew install jq` / `apt install jq` / `dnf install jq`)
+- `curl` and `awk` (pre-installed on most Unix systems)
 
 ## Setup
 
@@ -151,15 +138,9 @@ If you use Claude Code through the VS Code extension instead of the CLI, follow 
    curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh -o /tmp/setup_ccmetrics.sh && bash /tmp/setup_ccmetrics.sh && rm /tmp/setup_ccmetrics.sh
    ```
 3. Enter your Supabase URL, API key, and work email when prompted
-4. That's it. Metrics are collected automatically when you use Claude Code in VS Code.
+4. That's it. All features work automatically (metrics, utilization, retry queue).
 
-### What works out of the box
-
-- Session metrics (cost, duration, tokens, model) -- collected automatically
-- Utilization data (7-day %, 5-hour %) -- collected automatically
-- Failed sends are queued and retried -- works automatically
-
-### Statusline display in VS Code
+### Statusline in VS Code
 
 The statusline hook runs in VS Code native UI mode (caching metrics and OAuth data normally), but VS Code does not render its output. The formatted statusline is written to `~/.claude/metrics_cache/_statusline.txt` so external tools can read it.
 
