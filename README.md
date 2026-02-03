@@ -94,6 +94,41 @@ tail -f ~/.claude/ccmetrics.log
 # Session data will be sent automatically on session end
 ```
 
+## Recommended Settings (Optional)
+
+After installing ccmetrics, you can optionally apply recommended Claude Code safety and productivity settings:
+
+```bash
+bash recommended_cc_settings.sh
+```
+
+This interactive script configures:
+
+| Setting | Description |
+|---------|-------------|
+| **Model: opusplan** | Uses Opus for planning (deep reasoning) and Sonnet for implementation (fast, cost-effective) |
+| **Default Mode: plan** | Start sessions in plan mode for thoughtful analysis before making changes |
+| **Bash Allow** | Allow bash commands without prompts (with deny list guards for safety) |
+| **GitHub Fetch Allow** | Fetch from GitHub without prompts (read-only access) |
+| **File Deletion Guards** | Block `rm -rf *`, `rm -r *`, `rmdir *` |
+| **Git Safety Guards** | Block force push, reset --hard, clean, restore, branch -D |
+| **API/Misc Guards** | Block GitHub API mutations, chmod 777, file redirection, sed -i |
+
+### Usage
+
+```bash
+# Interactive mode (recommended)
+bash recommended_cc_settings.sh
+
+# Preview changes without applying
+bash recommended_cc_settings.sh --dry-run
+
+# Apply all recommendations non-interactively
+bash recommended_cc_settings.sh --yes
+```
+
+The script safely merges with your existing `~/.claude/settings.json` and creates a backup before making changes. Each setting is explained with current vs. recommended values.
+
 ## Usage
 
 Once installed, metrics are collected automatically:
