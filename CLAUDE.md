@@ -33,6 +33,9 @@ See `README.md` for user-facing install, usage, and troubleshooting docs.
 
 ```bash
 bash setup_ccmetrics.sh                                    # Install
+bash recommended_cc_settings.sh                            # Apply recommended safety settings (optional)
+bash recommended_cc_settings.sh --dry-run                  # Preview settings changes
+bash recommended_cc_settings.sh --yes                      # Apply all recommendations non-interactively
 tail -f ~/.claude/ccmetrics.log                            # Check logs (all levels)
 grep '\[SESSION_END\]' ~/.claude/ccmetrics.log             # Filter by module
 grep 'ERROR\|WARN' ~/.claude/ccmetrics.log                 # Errors and warnings only
