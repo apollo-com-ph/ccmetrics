@@ -124,11 +124,11 @@ If you use Claude Code through the VS Code extension instead of the CLI, follow 
 - Utilization data (7-day %, 5-hour %) -- collected automatically
 - Failed sends are queued and retried -- works automatically
 
-### Statusline not showing?
+### Statusline display in VS Code
 
-The VS Code native UI mode does not display the statusline. Your metrics are still being collected and sent -- you just won't see the real-time `[Sonnet 4.5]38%/$7.4 (72% 4h12m 5h) ...` display.
+The statusline hook runs in VS Code native UI mode (caching metrics and OAuth data normally), but VS Code does not render its output. The formatted statusline is written to `~/.claude/metrics_cache/_statusline.txt` so external tools can read it.
 
-If you want the statusline, switch to terminal mode by adding this to your VS Code `settings.json` (Ctrl/Cmd+Shift+P → "Preferences: Open User Settings (JSON)"):
+To see the statusline directly, switch to terminal mode by adding this to your VS Code `settings.json` (Ctrl/Cmd+Shift+P → "Preferences: Open User Settings (JSON)"):
 
 ```json
 "claudeCode.useTerminal": true

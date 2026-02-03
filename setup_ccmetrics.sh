@@ -738,15 +738,44 @@ if [ "$METRICS_SOURCE" = "none" ]; then
     debug_log "extracted from stdin: model=$MODEL cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS context_pct=$CONTEXT_PERCENT"
 fi
 
+# ============================================================================
+# TRANSCRIPT PARSING FALLBACK (defense-in-depth for VS Code native UI edge cases)
+# ============================================================================
+# If both cache and stdin produced no meaningful data, parse the transcript JSONL
+# directly. This covers edge cases where the statusline hook didn't fire.
+
+if { [ -z "$MODEL" ] || [ "$MODEL" = "unknown" ]; } && [ "${INPUT_TOKENS:-0}" = "0" ] && [ "${OUTPUT_TOKENS:-0}" = "0" ]; then
+    if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+        log "INFO  📄 Parsing transcript for metrics (cache and stdin both empty)"
+        METRICS_SOURCE="transcript"
+
+        # Extract model from first assistant message
+        T_MODEL=$(jq -r 'select(.type == "assistant") | .message.model // empty' "$TRANSCRIPT_PATH" 2>/dev/null | head -1)
+        [ -n "$T_MODEL" ] && MODEL="$T_MODEL"
+
+        # Sum tokens across all assistant messages
+        # input_tokens is non-cached only; add cache tokens for total input
+        T_INPUT=$(jq -r 'select(.type == "assistant" and .message.usage) | .message.usage | ((.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0))' "$TRANSCRIPT_PATH" 2>/dev/null | awk '{sum+=$1} END{print sum+0}')
+        T_OUTPUT=$(jq -r 'select(.type == "assistant" and .message.usage) | .message.usage.output_tokens // 0' "$TRANSCRIPT_PATH" 2>/dev/null | awk '{sum+=$1} END{print sum+0}')
+        [ "${T_INPUT:-0}" -gt 0 ] 2>/dev/null && INPUT_TOKENS="$T_INPUT"
+        [ "${T_OUTPUT:-0}" -gt 0 ] 2>/dev/null && OUTPUT_TOKENS="$T_OUTPUT"
+
+        debug_log "extracted from transcript: model=$MODEL in=$INPUT_TOKENS out=$OUTPUT_TOKENS"
+    fi
+fi
+
 # Detect client type (CLI vs VS Code)
 CLIENT_TYPE="cli"
-if [ -n "${VSCODE_PID:-}" ] || [ "${TERM_PROGRAM:-}" = "vscode" ]; then
+if [ -n "${VSCODE_PID:-}" ] || [ "${TERM_PROGRAM:-}" = "vscode" ] \
+   || [ -n "${VSCODE_IPC_HOOK_CLI:-}" ]; then
     CLIENT_TYPE="vscode"
 fi
 
 # ============================================================================
 # BASELINE DELTA COMPUTATION FOR /clear HANDLING
 # ============================================================================
+# Transcript source: tokens are already per-session (transcript resets after
+# /clear), so baseline delta logic does not apply.
 
 # Compute project hash for baseline file scoping
 PROJECT_HASH=$(echo -n "$PROJECT_DIR" | md5sum | cut -c1-8)
@@ -758,36 +787,40 @@ CUMULATIVE_DURATION_MS="$DURATION_MS"
 CUMULATIVE_INPUT="$INPUT_TOKENS"
 CUMULATIVE_OUTPUT="$OUTPUT_TOKENS"
 
-# If baseline exists, compute delta (per-session values)
-if [ -f "$BASELINE_FILE" ]; then
-    debug_log "Baseline file found: $BASELINE_FILE"
-    BASELINE_DATA=$(cat "$BASELINE_FILE")
-
-    BASELINE_COST=$(echo "$BASELINE_DATA" | jq -r '.cost_usd // 0')
-    BASELINE_DURATION_MS=$(echo "$BASELINE_DATA" | jq -r '.duration_ms // 0')
-    BASELINE_INPUT=$(echo "$BASELINE_DATA" | jq -r '.input_tokens // 0')
-    BASELINE_OUTPUT=$(echo "$BASELINE_DATA" | jq -r '.output_tokens // 0')
-
-    debug_log "Baseline values: cost=$BASELINE_COST duration_ms=$BASELINE_DURATION_MS in=$BASELINE_INPUT out=$BASELINE_OUTPUT"
-    debug_log "Cumulative values: cost=$CUMULATIVE_COST duration_ms=$CUMULATIVE_DURATION_MS in=$CUMULATIVE_INPUT out=$CUMULATIVE_OUTPUT"
-
-    # Edge case: if baseline > current, treat as stale (Claude Code restarted)
-    if [ "$(awk "BEGIN {print ($BASELINE_COST > $CUMULATIVE_COST || $BASELINE_INPUT > $CUMULATIVE_INPUT) ? 1 : 0}")" -eq 1 ]; then
-        log "WARN  ⚠️  Stale baseline detected (baseline > current), treating as first session"
-        debug_log "Deleting stale baseline file: $BASELINE_FILE"
-        rm -f "$BASELINE_FILE"
-    else
-        # Compute deltas
-        TOTAL_COST=$(awk "BEGIN {printf \"%.2f\", $CUMULATIVE_COST - $BASELINE_COST}")
-        DURATION_MS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_DURATION_MS - $BASELINE_DURATION_MS}")
-        INPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_INPUT - $BASELINE_INPUT}")
-        OUTPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_OUTPUT - $BASELINE_OUTPUT}")
-
-        log "INFO  📊 Delta computed: cost=\$$TOTAL_COST (cumulative=\$$CUMULATIVE_COST - baseline=\$$BASELINE_COST), duration=${DURATION_MS}ms, tokens=${INPUT_TOKENS}in+${OUTPUT_TOKENS}out"
-        debug_log "Delta values: cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS"
-    fi
+if [ "$METRICS_SOURCE" = "transcript" ]; then
+    debug_log "Skipping baseline delta (transcript source: values are already per-session)"
 else
-    debug_log "No baseline file found, using cumulative values as delta (first session)"
+    # If baseline exists, compute delta (per-session values)
+    if [ -f "$BASELINE_FILE" ]; then
+        debug_log "Baseline file found: $BASELINE_FILE"
+        BASELINE_DATA=$(cat "$BASELINE_FILE")
+
+        BASELINE_COST=$(echo "$BASELINE_DATA" | jq -r '.cost_usd // 0')
+        BASELINE_DURATION_MS=$(echo "$BASELINE_DATA" | jq -r '.duration_ms // 0')
+        BASELINE_INPUT=$(echo "$BASELINE_DATA" | jq -r '.input_tokens // 0')
+        BASELINE_OUTPUT=$(echo "$BASELINE_DATA" | jq -r '.output_tokens // 0')
+
+        debug_log "Baseline values: cost=$BASELINE_COST duration_ms=$BASELINE_DURATION_MS in=$BASELINE_INPUT out=$BASELINE_OUTPUT"
+        debug_log "Cumulative values: cost=$CUMULATIVE_COST duration_ms=$CUMULATIVE_DURATION_MS in=$CUMULATIVE_INPUT out=$CUMULATIVE_OUTPUT"
+
+        # Edge case: if baseline > current, treat as stale (Claude Code restarted)
+        if [ "$(awk "BEGIN {print ($BASELINE_COST > $CUMULATIVE_COST || $BASELINE_INPUT > $CUMULATIVE_INPUT) ? 1 : 0}")" -eq 1 ]; then
+            log "WARN  ⚠️  Stale baseline detected (baseline > current), treating as first session"
+            debug_log "Deleting stale baseline file: $BASELINE_FILE"
+            rm -f "$BASELINE_FILE"
+        else
+            # Compute deltas
+            TOTAL_COST=$(awk "BEGIN {printf \"%.2f\", $CUMULATIVE_COST - $BASELINE_COST}")
+            DURATION_MS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_DURATION_MS - $BASELINE_DURATION_MS}")
+            INPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_INPUT - $BASELINE_INPUT}")
+            OUTPUT_TOKENS=$(awk "BEGIN {printf \"%.0f\", $CUMULATIVE_OUTPUT - $BASELINE_OUTPUT}")
+
+            log "INFO  📊 Delta computed: cost=\$$TOTAL_COST (cumulative=\$$CUMULATIVE_COST - baseline=\$$BASELINE_COST), duration=${DURATION_MS}ms, tokens=${INPUT_TOKENS}in+${OUTPUT_TOKENS}out"
+            debug_log "Delta values: cost=$TOTAL_COST duration_ms=$DURATION_MS in=$INPUT_TOKENS out=$OUTPUT_TOKENS"
+        fi
+    else
+        debug_log "No baseline file found, using cumulative values as delta (first session)"
+    fi
 fi
 
 # Calculate duration in minutes (from potentially delta-adjusted DURATION_MS)
@@ -796,36 +829,39 @@ DURATION_MIN=$(awk "BEGIN {printf \"%.2f\", $DURATION_MS / 60000}" 2>/dev/null |
 # ============================================================================
 # BASELINE MANAGEMENT (must happen before send/skip to avoid double-counting)
 # ============================================================================
+# Skip for transcript source: no cumulative values to baseline against
 
-if [ "$REASON" = "clear" ]; then
-    # Save current cumulative values as baseline for next session
-    BASELINE_TMP="${BASELINE_FILE}.tmp.$$"
-    jq -n \
-      --arg cost "$CUMULATIVE_COST" \
-      --arg duration "$CUMULATIVE_DURATION_MS" \
-      --arg input "$CUMULATIVE_INPUT" \
-      --arg output "$CUMULATIVE_OUTPUT" \
-      --argjson saved_at "$(date +%s)" \
-      '{
-        cost_usd: ($cost | tonumber),
-        duration_ms: ($duration | tonumber),
-        input_tokens: ($input | tonumber),
-        output_tokens: ($output | tonumber),
-        saved_at: $saved_at
-      }' > "$BASELINE_TMP"
-    if [ -s "$BASELINE_TMP" ] && mv -f "$BASELINE_TMP" "$BASELINE_FILE" 2>/dev/null; then
-        log "INFO  💾 Saved baseline for next session: cost=\$$CUMULATIVE_COST, tokens=${CUMULATIVE_INPUT}in+${CUMULATIVE_OUTPUT}out"
+if [ "$METRICS_SOURCE" != "transcript" ]; then
+    if [ "$REASON" = "clear" ]; then
+        # Save current cumulative values as baseline for next session
+        BASELINE_TMP="${BASELINE_FILE}.tmp.$$"
+        jq -n \
+          --arg cost "$CUMULATIVE_COST" \
+          --arg duration "$CUMULATIVE_DURATION_MS" \
+          --arg input "$CUMULATIVE_INPUT" \
+          --arg output "$CUMULATIVE_OUTPUT" \
+          --argjson saved_at "$(date +%s)" \
+          '{
+            cost_usd: ($cost | tonumber),
+            duration_ms: ($duration | tonumber),
+            input_tokens: ($input | tonumber),
+            output_tokens: ($output | tonumber),
+            saved_at: $saved_at
+          }' > "$BASELINE_TMP"
+        if [ -s "$BASELINE_TMP" ] && mv -f "$BASELINE_TMP" "$BASELINE_FILE" 2>/dev/null; then
+            log "INFO  💾 Saved baseline for next session: cost=\$$CUMULATIVE_COST, tokens=${CUMULATIVE_INPUT}in+${CUMULATIVE_OUTPUT}out"
+        else
+            log "ERROR ❌ Failed to save baseline file: $BASELINE_FILE"
+            rm -f "$BASELINE_TMP"
+        fi
+        debug_log "Baseline saved to: $BASELINE_FILE"
     else
-        log "ERROR ❌ Failed to save baseline file: $BASELINE_FILE"
-        rm -f "$BASELINE_TMP"
-    fi
-    debug_log "Baseline saved to: $BASELINE_FILE"
-else
-    # Normal exit: delete baseline file (chain is over)
-    if [ -f "$BASELINE_FILE" ]; then
-        rm -f "$BASELINE_FILE"
-        log "INFO  🗑️  Deleted baseline file (session chain ended)"
-        debug_log "Baseline file removed: $BASELINE_FILE"
+        # Normal exit: delete baseline file (chain is over)
+        if [ -f "$BASELINE_FILE" ]; then
+            rm -f "$BASELINE_FILE"
+            log "INFO  🗑️  Deleted baseline file (session chain ended)"
+            debug_log "Baseline file removed: $BASELINE_FILE"
+        fi
     fi
 fi
 
@@ -1499,7 +1535,14 @@ UTIL_FMT=$(format_utilization "$SESSION_ID")
 PROJECT_FMT=$(format_project_dir "$PROJECT_DIR")
 
 # Output statusline: [Model]%/$usd (remaining% reset label) parent/project
-echo "[${MODEL_FMT}]${PCT_FMT}/${COST_FMT} ${UTIL_FMT} ${PROJECT_FMT}"
+STATUSLINE_OUTPUT="[${MODEL_FMT}]${PCT_FMT}/${COST_FMT} ${UTIL_FMT} ${PROJECT_FMT}"
+
+# Write to file for external consumers (VS Code status bar extension, etc.)
+STATUSLINE_FILE="${METRICS_CACHE_DIR}/_statusline.txt"
+echo "$STATUSLINE_OUTPUT" > "${STATUSLINE_FILE}.tmp.$$" && mv -f "${STATUSLINE_FILE}.tmp.$$" "$STATUSLINE_FILE" 2>/dev/null
+
+# Output to stdout (displayed in CLI mode)
+echo "$STATUSLINE_OUTPUT"
 
 exit 0
 STATUSEOF
@@ -1863,14 +1906,13 @@ detect_vscode_extension() {
                 echo ""
                 print_info "VS Code Extension Detected"
                 echo ""
-                print_warning "Note: VS Code native UI mode has limitations:"
-                echo "  • Session metrics are collected normally ✓"
-                echo "  • Statusline display is NOT available ✗"
+                print_success "All metrics work in VS Code native UI mode ✓"
+                echo "  • Statusline hook runs and caches data normally"
+                echo "  • Statusline output not displayed but written to:"
+                echo "    ~/.claude/metrics_cache/_statusline.txt"
                 echo ""
-                print_info "To enable full statusline support in VS Code:"
-                echo "  1. Add to VS Code settings.json:"
-                echo '     "claudeCode.useTerminal": true'
-                echo "  2. Reload VS Code"
+                print_info "For visible statusline in VS Code, use terminal mode:"
+                echo "  Add to VS Code settings.json: \"claudeCode.useTerminal\": true"
                 echo ""
                 return 0
             fi

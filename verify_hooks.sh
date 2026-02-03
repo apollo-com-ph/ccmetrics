@@ -294,9 +294,9 @@ for ext_dir in "$HOME/.vscode/extensions" "$HOME/.vscode-server/extensions"; do
         print_pass "VS Code Claude Code extension detected"
         echo ""
         echo "  VS Code Compatibility Information:"
-        echo "  • Native UI mode: Session metrics collected ✓, statusline NOT displayed ✗"
+        echo "  • Native UI mode: Metrics collected ✓, statusline runs but output not displayed"
+        echo "  • Statusline output written to ~/.claude/metrics_cache/_statusline.txt"
         echo "  • Terminal mode: Full feature support (set \"claudeCode.useTerminal\": true)"
-        echo "  • Data differences: context % in native UI is final value, not peak"
         echo ""
         break
     fi

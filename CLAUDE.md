@@ -27,7 +27,7 @@ See `README.md` for user-facing install, usage, and troubleshooting docs.
   - On `reason=clear`: sends delta to Supabase, saves new baseline for next session
   - On normal exit: sends delta, deletes baseline (chain is over)
 - SessionEnd reads cache + transcript → computes baseline delta (if in /clear chain) → checks OAuth token expiry → fetches usage/profile with retry (or uses cached fallback if expired) → POST to Supabase (empty payloads skipped) → on failure, queue for retry
-- **VS Code compatibility:** SessionEnd has stdin fallback when no cache exists (native UI mode), so metrics collection works in both CLI and VS Code
+- **VS Code compatibility:** The statusline hook fires in VS Code native UI mode (output just isn't displayed), so caching and OAuth work normally. SessionEnd also has a stdin fallback + transcript parsing fallback as defense-in-depth. The statusline output is written to `_statusline.txt` for external consumers (e.g., a VS Code status bar extension).
 
 ## Commands
 
@@ -55,7 +55,7 @@ The parenthetical shows API utilization: remaining capacity %, time until reset,
 
 ## Database Schema
 
-See `SUPABASE_SETUP.md` for full schema. Key columns: `session_id`, `developer`, `cost_usd`, `input_tokens`, `output_tokens`, `duration_minutes`, `model`, `claude_account_email`, `seven_day_utilization`, `five_hour_utilization`, `seven_day_sonnet_utilization` (with corresponding `_resets_at` timestamp columns), `metrics_source` ("cache" or "stdin"), `client_type` ("cli" or "vscode").
+See `SUPABASE_SETUP.md` for full schema. Key columns: `session_id`, `developer`, `cost_usd`, `input_tokens`, `output_tokens`, `duration_minutes`, `model`, `claude_account_email`, `seven_day_utilization`, `five_hour_utilization`, `seven_day_sonnet_utilization` (with corresponding `_resets_at` timestamp columns), `metrics_source` ("cache", "stdin", or "transcript"), `client_type` ("cli" or "vscode").
 
 **/clear sessions:** Each `/clear` creates a new `session_id`. Metrics are computed as per-session deltas using baseline files, so each session row in Supabase contains only the cost/tokens for that segment (not cumulative).
 
