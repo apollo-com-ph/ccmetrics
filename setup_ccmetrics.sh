@@ -1555,10 +1555,6 @@ STATUSEOF
 get_ccmetrics_config() {
     cat << 'EOF'
 {
-  "model": "opusplan",
-  "permissions": {
-    "defaultMode": "plan"
-  },
   "statusLine": {
     "type": "command",
     "command": "~/.claude/hooks/ccmetrics_statusline.sh"
@@ -1570,7 +1566,8 @@ get_ccmetrics_config() {
           {
             "type": "command",
             "command": "~/.claude/hooks/send_claude_metrics.sh",
-            "timeout": 20
+            "timeout": 20,
+            "runInBackground": true
           }
         ]
       }
@@ -1636,8 +1633,6 @@ remove_ccmetrics_hooks() {
 # Merge ccmetrics config into existing settings
 merge_ccmetrics_config() {
     local settings_file="$1"
-    local target_model="$2"
-    local target_mode="$3"
     local ccmetrics_config
     ccmetrics_config=$(get_ccmetrics_config)
 
@@ -1648,14 +1643,7 @@ merge_ccmetrics_config() {
 
         # Deep merge: existing settings + ccmetrics config
         # For hooks arrays, we append rather than replace
-        echo "$cleaned" | jq --argjson cc "$ccmetrics_config" --arg model "$target_model" --arg mode "$target_mode" '
-        # Set model to target value
-        .model = $model |
-
-        # Set permissions.defaultMode to target value (preserves existing allow/deny)
-        .permissions = (.permissions // {}) |
-        .permissions.defaultMode = $mode |
-
+        echo "$cleaned" | jq --argjson cc "$ccmetrics_config" '
         # Set statusLine (ccmetrics takes precedence)
         .statusLine = $cc.statusLine |
 
@@ -1669,11 +1657,8 @@ merge_ccmetrics_config() {
         .hooks.SessionStart = ((.hooks.SessionStart // []) + $cc.hooks.SessionStart)
         '
     else
-        # No existing settings, use target values with ccmetrics hooks
-        echo "$ccmetrics_config" | jq --arg model "$target_model" --arg mode "$target_mode" '
-        .model = $model |
-        .permissions.defaultMode = $mode
-        '
+        # No existing settings, use ccmetrics hooks
+        echo "$ccmetrics_config"
     fi
 }
 
@@ -1707,41 +1692,9 @@ configure_claude_settings() {
         print_info "ccmetrics hooks already installed, updating..."
     fi
 
-    # Determine target model and defaultMode values (with prompting if existing file differs)
-    local new_model="opusplan"
-    local new_default_mode="plan"
-
-    # Only prompt when NOT in dry-run mode and settings file exists
-    if [ "$DRY_RUN" != true ] && [ -f "$settings_file" ]; then
-        local existing_model=$(jq -r '.model // empty' "$settings_file" 2>/dev/null)
-        local existing_mode=$(jq -r '.permissions.defaultMode // empty' "$settings_file" 2>/dev/null)
-
-        # Only prompt for model if existing value differs from ccmetrics default
-        if [ -n "$existing_model" ] && [ "$existing_model" != "opusplan" ]; then
-            echo ""
-            echo -e "  model: ${existing_model} → opusplan" >&2
-            read -p "  Overwrite? (y/N): " -n 1 -r >&2
-            echo >&2
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                new_model="$existing_model"
-            fi
-        fi
-
-        # Only prompt for defaultMode if existing value differs from ccmetrics default
-        if [ -n "$existing_mode" ] && [ "$existing_mode" != "plan" ]; then
-            echo -e "  permissions.defaultMode: ${existing_mode} → plan" >&2
-            read -p "  Overwrite? (y/N): " -n 1 -r >&2
-            echo >&2
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                new_default_mode="$existing_mode"
-            fi
-            echo ""
-        fi
-    fi
-
     # Generate merged configuration
     local new_settings
-    new_settings=$(merge_ccmetrics_config "$settings_file" "$new_model" "$new_default_mode")
+    new_settings=$(merge_ccmetrics_config "$settings_file")
 
     # Validate JSON before proceeding
     if ! echo "$new_settings" | jq empty 2>/dev/null; then
@@ -1765,7 +1718,7 @@ configure_claude_settings() {
 
         # Show what other keys exist that we're preserving
         local preserved_keys
-        preserved_keys=$(jq -r 'keys | map(select(. != "hooks" and . != "statusLine" and . != "model" and . != "permissions")) | join(", ")' "$settings_file" 2>/dev/null)
+        preserved_keys=$(jq -r 'keys | map(select(. != "hooks" and . != "statusLine")) | join(", ")' "$settings_file" 2>/dev/null)
         if [ -n "$preserved_keys" ]; then
             print_info "Preserving existing settings: $preserved_keys"
         fi
