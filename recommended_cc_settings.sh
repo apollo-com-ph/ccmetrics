@@ -231,8 +231,10 @@ prompt_file_deletion_guards() {
     print_info "  These rules prevent bulk or recursive file deletion:"
     echo ""
     echo "  • rm -rf *        Prevent recursive force deletion"
+    echo "  • rm -fr *        Prevent recursive force deletion (flag variant)"
     echo "  • rm -r *         Prevent recursive deletion"
     echo "  • rmdir *         Prevent directory removal with wildcards"
+    echo "  • truncate *      Prevent file truncation"
     echo ""
 
     print_current "No deletion guards configured"
@@ -255,11 +257,13 @@ prompt_git_guards() {
     print_info "  These rules prevent destructive git operations:"
     echo ""
     echo "  • git push --force / -f   Prevent force pushes to remote"
+    echo "  • git push * --force      Prevent force pushes (flag position variant)"
     echo "  • git reset --hard        Prevent losing uncommitted changes"
     echo "  • git clean               Prevent removing untracked files"
     echo "  • git checkout --         Prevent discarding file changes"
     echo "  • git restore             Prevent discarding file changes"
     echo "  • git branch -D           Prevent force-deleting branches"
+    echo "  • git stash drop/clear    Prevent losing stashed work"
     echo ""
 
     print_current "No git safety guards configured"
@@ -275,9 +279,9 @@ prompt_git_guards() {
     echo ""
 }
 
-# Prompt 7: API & Misc Guards
-prompt_api_misc_guards() {
-    print_section_header "7" "API & Miscellaneous Guards"
+# Prompt 7: Miscellaneous Guards
+prompt_misc_guards() {
+    print_section_header "7" "Miscellaneous Safety Guards"
     echo ""
     print_info "  Additional safety rules:"
     echo ""
@@ -285,17 +289,21 @@ prompt_api_misc_guards() {
     echo "  • chmod -R 777                Prevent dangerous permission changes"
     echo "  • > (redirection)             Prevent file truncation"
     echo "  • sed -i                      Encourage using Edit tool instead"
+    echo "  • npm/yarn publish            Prevent accidental package publishing"
+    echo "  • docker system prune         Prevent container/image deletion"
+    echo "  • docker rm -f                Prevent force-removing containers"
+    echo "  • dd                          Prevent disk/file overwriting"
     echo ""
 
-    print_current "No API/misc guards configured"
+    print_current "No miscellaneous guards configured"
     print_recommended "Block dangerous operations"
     echo ""
 
     if prompt_yn "  Apply these guards? (Y/n): "; then
         CHOICES["deny_misc"]="yes"
-        print_success "API & miscellaneous guards will be applied"
+        print_success "Miscellaneous guards will be applied"
     else
-        print_skip "No API/misc guards will be added"
+        print_skip "No miscellaneous guards will be added"
     fi
     echo ""
 }
@@ -328,15 +336,15 @@ build_new_settings() {
     local deny_items=()
 
     if [[ "${CHOICES[deny_file_deletion]:-}" == "yes" ]]; then
-        deny_items+=("rm -rf *" "rm -r *" "rmdir *")
+        deny_items+=("rm -rf *" "rm -fr *" "rm -r *" "rmdir *" "truncate *")
     fi
 
     if [[ "${CHOICES[deny_git]:-}" == "yes" ]]; then
-        deny_items+=("git push --force *" "git push -f *" "git reset --hard *" "git clean *" "git checkout -- *" "git restore *" "git branch -D *")
+        deny_items+=("git push --force *" "git push -f *" "git push * --force" "git push * -f" "git reset --hard *" "git clean *" "git checkout -- *" "git restore *" "git branch -D *" "git stash drop *" "git stash clear")
     fi
 
     if [[ "${CHOICES[deny_misc]:-}" == "yes" ]]; then
-        deny_items+=("gh api -X DELETE *" "gh api -X PUT *" "gh api -X POST *" "chmod -R 777 *" "> *" "sed -i *")
+        deny_items+=("gh api -X DELETE *" "gh api -X PUT *" "gh api -X POST *" "chmod -R 777 *" "> *" "sed -i *" "npm publish *" "yarn publish *" "docker system prune *" "docker rm -f *" "dd *")
     fi
 
     if [[ ${#deny_items[@]} -gt 0 ]]; then
@@ -504,7 +512,7 @@ main() {
     prompt_webfetch_allow
     prompt_file_deletion_guards
     prompt_git_guards
-    prompt_api_misc_guards
+    prompt_misc_guards
 
     # Check if any choices were made
     # Use parameter expansion with + to avoid unbound variable error
