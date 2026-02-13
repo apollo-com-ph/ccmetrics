@@ -10,12 +10,14 @@ See `README.md` for user-facing install, usage, and troubleshooting docs.
 
 ## Architecture
 
-**Hooks** (in `~/.claude/hooks/`):
+**Hook scripts** (repo: `hooks/`, installed to `~/.claude/hooks/`):
 - `ccmetrics_statusline.sh` - displays metrics, caches to `~/.claude/metrics_cache/{session_id}.json`
 - `send_claude_metrics.sh` - reads cache on SessionEnd, POSTs to Supabase
 - `process_metrics_queue.sh` - retries failed sends from `~/.claude/metrics_queue/`
 
-**Config** (`~/.claude/.ccmetrics-config.json`): `developer_email`, `supabase_url`, `supabase_key`, `created_at` (ISO timestamp), `debug` (boolean, default false)
+**Setup flow:** `setup_ccmetrics.sh` downloads hook scripts from GitHub (`hooks/` directory) at install time. Manual installation: copy `hooks/*.sh` to `~/.claude/hooks/` and configure settings.json (see README "Manual Installation").
+
+**Config** (`~/.claude/.ccmetrics-config.json`): `developer_email`, `supabase_url`, `supabase_key`, `created_at` (ISO timestamp), `debug` (boolean, default false), `statusline_enabled` (boolean, default true)
 
 **Logging** (`~/.claude/ccmetrics.log`): Single unified log file for both regular and debug entries. All entries include a module tag (`[SESSION_END]` or `[STATUSLINE]`) and a log level (`INFO`, `WARN`, `ERROR`, or `DEBUG`). Debug entries (level `DEBUG`) only appear when `debug=true` in config. Format: `[YYYY-MM-DD HH:MM:SS] [MODULE] LEVEL message`
 
@@ -51,6 +53,8 @@ ls ~/.claude/metrics_queue/ | wc -l                        # Queue size
 `jq`, `curl`, `awk` - install before running setup (see README). Note: `awk` and `curl` are pre-installed on most Unix systems.
 
 ## Statusline
+
+**Optional:** Setup prompts to enable/disable statusline registration. When disabled (`statusline_enabled=false`), hook script is still installed but not registered in settings.json. Metrics collection via SessionEnd continues to work, falling back to stdin/transcript parsing.
 
 Format: `[Model]%/$usd (remaining% reset) [!warning!] parent/project`
 
