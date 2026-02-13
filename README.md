@@ -6,15 +6,135 @@ Automated metadata collection for Claude Code sessions with Supabase storage and
 
 - ✅ **Metadata-only tracking** (no conversation content)
 - ✅ **Automatic retry queue** for network failures
-- ✅ **Real-time statusline** showing usage
+- ✅ **Real-time statusline** showing usage (optional)
 - ✅ **Free Supabase storage**
 - ✅ **Privacy-first design**
 - ✅ **/clear segment tracking** (each conversation segment gets its own row)
 
-## Quick Install
+## Install
+
+### Prerequisites
+
+- Claude Code installed
+- Supabase account with project set up ([see Backend Setup](#backend-setup-supabase))
+- `jq` installed (`brew install jq` / `apt install jq` / `dnf install jq`)
+- `curl` and `awk` (pre-installed on most Unix systems)
+
+### Quick Install
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh -o /tmp/setup_ccmetrics.sh && bash /tmp/setup_ccmetrics.sh && rm /tmp/setup_ccmetrics.sh
 ```
+
+### Setup Prompts
+
+The installer will ask for:
+
+1. **Work email** - Your developer identifier (e.g., `you@company.com`)
+2. **Supabase Project URL** - From your Supabase dashboard (e.g., `https://xxxxx.supabase.co`)
+3. **Supabase API Key** - Publishable key starting with `sb_publishable_` (from Project Settings > API)
+4. **Enable statusline?** (Y/n) - Custom statusline showing real-time cost/usage
+   - **Y (default)**: Registers statusline in `settings.json`, replacing any existing statusLine
+   - **N**: Hook scripts installed but statusLine not registered (metrics still collected via SessionEnd)
+
+The script safely merges with existing `settings.json`:
+- Preserves all existing configuration keys
+- Appends hooks without overwriting other hooks
+- Creates timestamped backups before any modification
+- Validates JSON before writing
+
+### Verify Installation
+
+```bash
+# Check logs
+tail -f ~/.claude/ccmetrics.log
+
+# Start a Claude Code session
+# Metrics will be sent automatically on session end
+```
+
+### Setup Options
+
+```bash
+# Preview changes without modifying files
+bash setup_ccmetrics.sh --dry-run
+
+# Uninstall ccmetrics hooks (preserves other settings)
+bash setup_ccmetrics.sh --uninstall
+
+# Preview uninstall changes
+bash setup_ccmetrics.sh --uninstall --dry-run
+```
+
+### Manual Installation (Advanced)
+
+If you prefer manual installation or need to troubleshoot:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/apollo-com-ph/ccmetrics.git
+   cd ccmetrics
+   ```
+
+2. **Copy hook scripts:**
+   ```bash
+   mkdir -p ~/.claude/hooks
+   cp hooks/*.sh ~/.claude/hooks/
+   chmod +x ~/.claude/hooks/*.sh
+   ```
+
+3. **Create config file (`~/.claude/.ccmetrics-config.json`):**
+   ```json
+   {
+     "developer_email": "you@company.com",
+     "supabase_url": "https://xxxxx.supabase.co",
+     "supabase_key": "sb_publishable_xxxxxxxxxxxx",
+     "created_at": "2025-01-15T10:00:00Z",
+     "debug": false,
+     "statusline_enabled": true
+   }
+   ```
+   Then secure it: `chmod 600 ~/.claude/.ccmetrics-config.json`
+
+4. **Edit `~/.claude/settings.json` to register hooks:**
+
+   Add this to your `settings.json` (or merge with existing hooks):
+
+   ```json
+   {
+     "statusLine": {
+       "type": "command",
+       "command": "~/.claude/hooks/ccmetrics_statusline.sh"
+     },
+     "hooks": {
+       "SessionEnd": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "~/.claude/hooks/send_claude_metrics.sh",
+               "timeout": 20,
+               "runInBackground": true
+             }
+           ]
+         }
+       ],
+       "SessionStart": [
+         {
+           "hooks": [
+             {
+               "type": "command",
+               "command": "~/.claude/hooks/process_metrics_queue.sh",
+               "timeout": 30
+             }
+           ]
+         }
+       ]
+     }
+   }
+   ```
+
+   **Note:** `statusLine` is optional - omit it if you set `statusline_enabled: false` in config.
 
 ## What Gets Tracked
 
@@ -35,128 +155,21 @@ curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_
 - Code snippets
 - File contents
 
-## Prerequisites
-
-- Claude Code installed
-- Supabase account (free tier)
-- `jq` installed (`brew install jq` / `apt install jq` / `dnf install jq`)
-- `curl` and `awk` (pre-installed on most Unix systems)
-
-## Setup
-
-### 1. Create Supabase Project
-
-Follow [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md) to create the project, `sessions` table, and RLS policies. You'll need your Project URL and API key for step 2.
-
-### 2. Run Setup Script
-
-Run the Quick Install command above, then enter your Supabase URL, API key, and work email when prompted.
-
-#### Setup Options
-
-```bash
-# Preview changes without modifying files
-bash setup_ccmetrics.sh --dry-run
-
-# Uninstall ccmetrics hooks (preserves other settings)
-bash setup_ccmetrics.sh --uninstall
-
-# Preview uninstall changes
-bash setup_ccmetrics.sh --uninstall --dry-run
-```
-
-The setup script safely merges with existing `settings.json`:
-- Preserves all existing configuration keys
-- Appends hooks without overwriting other hooks
-- Creates timestamped backups before any modification
-- Validates JSON before writing
-- Sets default model to `opusplan` and permission mode to `plan`
-
-### 3. Verify Installation
-```bash
-# Check logs
-tail -f ~/.claude/ccmetrics.log
-
-# Start Claude Code session
-# Session data will be sent automatically on session end
-```
-
-## Recommended Settings (Optional)
-
-After installing ccmetrics, you can optionally apply recommended Claude Code safety and productivity settings:
-
-```bash
-bash recommended_cc_settings.sh              # Interactive mode
-bash recommended_cc_settings.sh --dry-run    # Preview changes
-bash recommended_cc_settings.sh --yes        # Apply all recommendations (Relaxed mode)
-```
-
-This interactive script lets you choose a security level for bash permissions:
-
-### Security Levels
-
-| Level | Bash Permissions | Deny Rules | Best For |
-|-------|------------------|------------|----------|
-| **YOLO** | `Bash(*)` allowed, NO deny rules | None | Experienced users who accept all risks, maximum speed |
-| **Relaxed** (default) | `Bash(*)` allowed, dangerous commands blocked | Full deny list | Trusted projects, daily use, good balance |
-| **Balanced** | Whitelist of safe commands (npm, git read-ops, pytest, etc.) | Full deny list | Unfamiliar codebases, explicit control |
-| **Strict** | No auto-allow, prompt for everything | N/A | Sensitive environments, learning Claude |
-
-### Settings Configured
-
-| Setting | Description |
-|---------|-------------|
-| **Model: opusplan** | Uses Opus for planning (deep reasoning) and Sonnet for implementation (fast, cost-effective) |
-| **Default Mode: plan** | Start sessions in plan mode for thoughtful analysis before making changes |
-| **Bash Permissions** | Based on your chosen security level (see table above) |
-| **GitHub Fetch Allow** | Fetch from GitHub without prompts (read-only access) |
-| **File Deletion Guards** | Block `rm -rf *`, `rm -r *`, `rmdir *` (Relaxed/Balanced only) |
-| **Git Safety Guards** | Block force push, reset --hard, clean, restore, branch -D (Relaxed/Balanced only) |
-| **API/Misc Guards** | Block GitHub API mutations, chmod 777, file redirection, sed -i (Relaxed/Balanced only) |
-
-The script safely merges with your existing `~/.claude/settings.json` and creates a backup before making changes. Each setting is explained with current vs. recommended values.
-
 ## Usage
+
+### How It Works
 
 Once installed, metrics are collected automatically:
 
 - **SessionEnd**: Data sent to Supabase (skips empty sessions with no tokens/cost)
 - **SessionStart**: Retries any queued failed sends
-- **StatusLine**: Real-time usage display (if configured)
+- **StatusLine** (if enabled): Real-time usage display
 
 Empty payloads (0 tokens, $0 cost, unknown model) are automatically skipped to avoid cluttering the database.
 
-## Using with the VS Code Claude Code Extension
+### Statusline Display
 
-If you use Claude Code through the VS Code extension instead of the CLI, follow these steps:
-
-### Setup
-
-1. Open a terminal (VS Code's integrated terminal or any external terminal)
-2. Run the same install command:
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/apollo-com-ph/ccmetrics/main/setup_ccmetrics.sh -o /tmp/setup_ccmetrics.sh && bash /tmp/setup_ccmetrics.sh && rm /tmp/setup_ccmetrics.sh
-   ```
-3. Enter your Supabase URL, API key, and work email when prompted
-4. That's it. All features work automatically (metrics, utilization, retry queue).
-
-### Statusline in VS Code
-
-**Native UI mode (`useTerminal=false`, the default):** The statusline hook does NOT fire in VS Code's native UI mode. Metrics collection still works but uses transcript parsing as a fallback at session end, calculating approximate cost from token counts. This results in slightly less precise cost tracking (base pricing rates only, no cache tier discounts).
-
-**Terminal mode (`useTerminal=true`):** Full metrics support with real-time cost/token/context data. Recommended for complete tracking accuracy.
-
-To enable terminal mode, add this to your VS Code `settings.json` (Ctrl/Cmd+Shift+P → "Preferences: Open User Settings (JSON)"):
-
-```json
-"claudeCode.useTerminal": true
-```
-
-Then reload VS Code. Terminal mode gives you the same experience as the CLI, including the visible statusline.
-
-## Statusline Display
-
-Format: `[Model]%/$usd (remaining% reset) [!warning!] parent/project`
+**Format:** `[Model]%/$usd (remaining% reset) [!warning!] parent/project`
 
 **Examples:**
 ```
@@ -176,6 +189,48 @@ Format: `[Model]%/$usd (remaining% reset) [!warning!] parent/project`
 
 To customize, edit `~/.claude/hooks/ccmetrics_statusline.sh` -- see comments in the script for available fields and formatting functions.
 
+### VS Code Extension
+
+If you use Claude Code through the VS Code extension:
+
+1. Run the same install command in any terminal (VS Code's integrated terminal or external)
+2. Enter your Supabase URL, API key, and work email when prompted
+3. That's it - metrics collection works automatically
+
+**Metrics accuracy:**
+- **Native UI mode** (`useTerminal=false`, the default): Statusline hook does NOT fire. SessionEnd falls back to transcript parsing, calculating approximate cost from token counts (base pricing rates only, no cache tier discounts).
+- **Terminal mode** (`useTerminal=true`): Full metrics support with real-time cost/token/context data. Recommended for complete accuracy.
+
+To enable terminal mode, add to your VS Code `settings.json`:
+```json
+"claudeCode.useTerminal": true
+```
+
+The statusline output is also written to `~/.claude/metrics_cache/_statusline.txt` for external consumers (e.g., custom VS Code status bar extensions).
+
+### Recommended Settings (Optional)
+
+Apply recommended Claude Code safety and productivity settings:
+
+```bash
+bash recommended_cc_settings.sh              # Interactive mode
+bash recommended_cc_settings.sh --dry-run    # Preview changes
+bash recommended_cc_settings.sh --yes        # Apply all (Relaxed mode)
+```
+
+Choose a security level for bash permissions:
+
+| Level | Bash Permissions | Best For |
+|-------|------------------|----------|
+| **YOLO** | All commands allowed, no deny rules | Experienced users, maximum speed |
+| **Relaxed** | All commands, dangerous ones blocked | Daily use, good balance (default) |
+| **Balanced** | Whitelist of safe commands only | Unfamiliar codebases |
+| **Strict** | Prompt for everything | Sensitive environments, learning |
+
+Other settings: opusplan model (Opus for planning, Sonnet for implementation), plan mode default, GitHub read access, safety guards for `rm -rf`, `git reset --hard`, etc.
+
+See [`recommended_cc_settings.sh`](recommended_cc_settings.sh) for full details.
+
 ## Monitoring
 
 ### Check Queue Status
@@ -193,25 +248,6 @@ tail -20 ~/.claude/ccmetrics.log
 ### Query Data in Supabase
 
 See [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md#useful-sql-queries) for example queries.
-
-## Files Created
-```
-~/.claude/
-├── settings.json                    # Claude Code configuration
-├── .ccmetrics-config.json           # Credentials (chmod 600)
-├── ccmetrics.log                    # Sync activity log
-├── metrics_queue/                   # Retry queue for failed sends
-│   └── [timestamp]_[uuid].json
-├── metrics_cache/                   # Session data cache for SessionEnd
-│   ├── [session_id].json            # Per-session metrics
-│   ├── _oauth_cache.json            # Shared OAuth cache (updated every 5min)
-│   ├── _statusline.txt              # Statusline output for VS Code
-│   └── _clear_baseline_*.json       # Per-project /clear delta tracking
-└── hooks/
-    ├── send_claude_metrics.sh       # Main metrics collection hook
-    ├── process_metrics_queue.sh     # Queue processor (SessionStart)
-    └── ccmetrics_statusline.sh      # Custom statusline (context usage focus)
-```
 
 ## Troubleshooting
 
@@ -257,11 +293,46 @@ tail -f ~/.claude/ccmetrics.log
 # Look for: "⚠️  OAuth token expired X.Xh ago (session was idle). Usage/profile data will use cached fallback."
 ```
 
-The cached data is automatically cleaned up and has minimal performance impact (runs in background, never blocks statusline rendering).
-
 ### Disable monitoring
 
 See [Setup Options](#setup-options) for `--uninstall` and `--dry-run` flags.
+
+## Backend Setup (Supabase)
+
+You'll need a Supabase project before installing ccmetrics. Follow the guide in [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md) to:
+
+1. Create a free Supabase project
+2. Create the `sessions` table with the correct schema
+3. Set up Row Level Security (RLS) policies for write-only access
+4. Get your Project URL and publishable API key
+
+**Quick summary:**
+- Create project at [supabase.com](https://supabase.com)
+- Run the SQL script from `SUPABASE_SETUP.md` to create the table
+- Copy your Project URL (Settings > API > Project URL)
+- Copy your publishable key (Settings > API > Project API keys > `publishable` key)
+
+Use these values when running `setup_ccmetrics.sh`.
+
+## Files Created
+
+```
+~/.claude/
+├── settings.json                    # Claude Code configuration
+├── .ccmetrics-config.json           # Credentials (chmod 600)
+├── ccmetrics.log                    # Sync activity log
+├── metrics_queue/                   # Retry queue for failed sends
+│   └── [timestamp]_[uuid].json
+├── metrics_cache/                   # Session data cache for SessionEnd
+│   ├── [session_id].json            # Per-session metrics
+│   ├── _oauth_cache.json            # Shared OAuth cache (updated every 5min)
+│   ├── _statusline.txt              # Statusline output for VS Code
+│   └── _clear_baseline_*.json       # Per-project /clear delta tracking
+└── hooks/
+    ├── send_claude_metrics.sh       # Main metrics collection hook
+    ├── process_metrics_queue.sh     # Queue processor (SessionStart)
+    └── ccmetrics_statusline.sh      # Custom statusline (context usage focus)
+```
 
 ## Privacy & Compliance
 
