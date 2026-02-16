@@ -1,6 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+# Check bash version (requires 4.0+ for associative arrays)
+if ((BASH_VERSINFO[0] < 4)); then
+    echo "Error: This script requires bash 4.0+ (you have $BASH_VERSION)."
+    echo "On macOS: brew install bash, then run with: /opt/homebrew/bin/bash $0"
+    exit 1
+fi
+
 # Color codes
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'

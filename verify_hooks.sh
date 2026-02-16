@@ -1,16 +1,50 @@
 #!/bin/bash
 # verify_hooks.sh - Diagnostic script to validate ccmetrics hooks installation
+#
+# Usage:
+#   ./verify_hooks.sh          # Dry-run mode (default, no actual Supabase sends)
+#   ./verify_hooks.sh --live   # Live mode (actual Supabase connectivity test)
 
 set -euo pipefail
+
+# Mode flag
+DRY_RUN=true
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --live)
+            DRY_RUN=false
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--dry-run|--live]"
+            exit 1
+            ;;
+    esac
+done
 
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 PASS_COUNT=0
 FAIL_COUNT=0
+
+# Show mode at start
+if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}Running in DRY-RUN mode (no actual Supabase sends)${NC}"
+    echo -e "Use ${BLUE}--live${NC} flag for actual connectivity test"
+    echo ""
+fi
 
 print_pass() {
     echo -e "${GREEN}✓ PASS${NC}: $1"
@@ -216,7 +250,10 @@ fi
 # 7. Functional Test: Supabase Connectivity
 print_section "Functional Test: Supabase Connectivity"
 
-if [[ -f "$CONFIG_FILE" ]] && command -v jq &> /dev/null && command -v curl &> /dev/null; then
+if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}[DRY-RUN MODE]${NC} Skipping actual Supabase connectivity test"
+    print_pass "Dry-run mode active (use --live for actual connectivity test)"
+elif [[ -f "$CONFIG_FILE" ]] && command -v jq &> /dev/null && command -v curl &> /dev/null; then
     supabase_url=$(jq -r '.supabase_url // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
     supabase_key=$(jq -r '.supabase_key // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
     developer_email=$(jq -r '.developer_email // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
