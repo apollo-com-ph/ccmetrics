@@ -4,10 +4,36 @@
 # ccmetrics Test Suite
 # Comprehensive tests for recent changes: transcript fallback, VS Code
 # detection, statusline output, unified logging
+#
+# Usage:
+#   ./test_ccmetrics.sh          # Dry-run mode (default, no actual sends)
+#   ./test_ccmetrics.sh --live   # Live mode (actual Supabase sends)
 #############################################################################
 
 # Don't exit on error - we want to run all tests
 set +e
+
+# Mode flag
+DRY_RUN=true
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --live)
+            DRY_RUN=false
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--dry-run|--live]"
+            exit 1
+            ;;
+    esac
+done
 
 # Color codes for output
 RED='\033[0;31m'
@@ -46,6 +72,13 @@ print_section() {
 # =================================================================
 test_transcript_parsing() {
     print_header "TEST 1: Transcript Parsing Fallback"
+
+    if [ "$DRY_RUN" = true ]; then
+        echo -e "${YELLOW}[DRY-RUN MODE]${NC} Skipping actual Supabase send test"
+        test_pass "Dry-run mode active (use --live for actual sends)"
+        echo
+        return
+    fi
 
     # Create mock transcript file
     TRANSCRIPT_DIR=$(mktemp -d)
@@ -352,6 +385,13 @@ test_e2e_verification() {
 print_header "ccmetrics Test Suite"
 echo "Testing recent changes: transcript fallback, VS Code detection,"
 echo "statusline output, unified logging"
+echo
+if [ "$DRY_RUN" = true ]; then
+    echo -e "${YELLOW}Running in DRY-RUN mode (no actual Supabase sends)${NC}"
+    echo -e "Use ${BLUE}--live${NC} flag for actual sends"
+else
+    echo -e "${YELLOW}Running in LIVE mode (actual Supabase sends)${NC}"
+fi
 echo
 
 # Run all tests
