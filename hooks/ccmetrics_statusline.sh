@@ -430,7 +430,8 @@ format_utilization() {
 
         # Convert to days (with fractional precision)
         days_remaining=$(awk -v sec="$(validate_numeric "$seconds_remaining")" 'BEGIN {printf "%.2f", sec / 86400}')
-        days_elapsed=$(awk -v rem="$(validate_numeric "$days_remaining")" 'BEGIN {printf "%.2f", 7 - rem}')
+        # Calculate days_elapsed as ceiling of (7 - days_remaining), minimum 1
+        days_elapsed=$(awk -v rem="$(validate_numeric "$days_remaining")" 'BEGIN {d = 7 - rem; printf "%d", (d < 1 ? 1 : int(d+0.999))}')
 
         # Sustainable threshold = days_elapsed × 14.28%
         local sustainable_threshold
